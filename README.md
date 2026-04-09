@@ -1,10 +1,12 @@
-# Token Budget Pacing
+# TokenPUA
 
 macOS 菜单栏工具，实时显示每月 Token 额度使用进度，帮你把额度花完不浪费。
 
 同时接入两个渠道：
-- **WOA**（`tokens.woa.com`）：按模型展示美元花费，支持工作日 pacing 计算
-- **Codebuddy**（`tencent.sso.codebuddy.cn`）：展示月度 token 数量用量
+- **CC（WOA 渠道）**（`tokens.woa.com`）：按模型展示美元花费，支持工作日 pacing 计算
+- **CB（Codebuddy 渠道）**（`tencent.sso.codebuddy.cn`）：月度 token 积分用量（100 秒分 = $1，统一以美元显示）
+
+缩写约定：**CC = WOA 渠道（美元消耗）**，**CB = Codebuddy 渠道（token 消耗 → 按 100 积分 = $1 统一为美元显示）**。
 
 ---
 
@@ -31,7 +33,7 @@ Token 已用 14,748  /  150,000
 ### 1. 安装 SwiftBar
 
 ```bash
-brew install swiftbar
+brew install --cask swiftbar
 ```
 
 或从 [swiftbar.app](https://swiftbar.app) 下载。
@@ -39,10 +41,10 @@ brew install swiftbar
 ### 2. 安装依赖
 
 ```bash
-pip3 install cryptography --break-system-packages
+python3 -m pip install cryptography --break-system-packages
 ```
 
-> **注意**：Homebrew Python 是 externally-managed 环境，必须加 `--break-system-packages`，否则报错拒绝安装。
+> `install.sh` 会自动检测并尝试安装该依赖；手动执行仅用于补装或排错。
 
 ### 3. 部署插件
 
@@ -50,26 +52,31 @@ pip3 install cryptography --break-system-packages
 bash install.sh
 ```
 
+安装脚本会自动完成：
+- 识别 SwiftBar 当前插件目录并部署 `tokens.3m.py`
+- 按本机 Python 路径修正 shebang
+- 若插件被 SwiftBar 禁用，自动解除 `tokens.3m.py` 的禁用状态
+- 重启并刷新 SwiftBar
+
 或手动：
 
 ```bash
-cp tokens.3m.py ~/.swiftbar-plugins/tokens.3m.py
+PLUGIN_DIR="$(defaults read com.ameba.SwiftBar PluginDirectory 2>/dev/null || echo "$HOME/.swiftbar-plugins")"
+cp tokens.3m.py "$PLUGIN_DIR/tokens.3m.py"
 ```
 
-### 4. 开启 Edge AppleScript 权限（必须）
+### 4. 开启 Edge AppleScript 权限（推荐）
 
-**这一步不做，数据无法自动刷新。**
+**不开也能用，但会更依赖手动更新 Cookie；开启后自动获取成功率更高。**
 
 Mac 屏幕**最顶部系统菜单栏**（不是 Edge 窗口内）→ **视图（View）** → **开发人员（Developer）** → **允许 Apple 活动中的 JavaScript（Allow JavaScript from Apple Events）** → 勾选。
 
 > 找不到"开发人员"子菜单？在 Edge 地址栏输入 `edge://flags/#edge-developer-mode-devtools` 开启开发者模式后重试。
 
-### 5. 保持 Edge 登录并开着对应 Tab
+### 5. 登录状态要求（重要）
 
-- 打开 `https://tokens-nbyxw43y.app.with.woa.com` 并登录（WOA 内网）
-- 打开 `https://tencent.sso.codebuddy.cn/profile/usage` 并登录（Codebuddy）
-
-两个 tab 保持打开即可，插件每 3 分钟自动从浏览器内部读取数据，**无需手动更新 cookie**。
+- **WOA 渠道**：首次安装需要提供 WOA Cookie（`install.sh` 会提示输入），后续过期时在菜单中点 `更新 WOA Cookie`。
+- **Codebuddy 渠道**：建议保持 `https://tencent.sso.codebuddy.cn/profile/usage` 已登录；插件会优先尝试自动获取，失败时可在菜单中手动更新 CB Cookie。
 
 ---
 
@@ -106,6 +113,34 @@ Mac 屏幕**最顶部系统菜单栏**（不是 Edge 窗口内）→ **视图（
 - [Homebrew](https://brew.sh)
 - Microsoft Edge（用于 AppleScript 自动认证）
 - 公司内网访问权限（WOA 渠道）
+
+---
+
+## 快速自检（菜单栏空白 / 没内容时）
+
+1. **先看插件是否能在终端输出**：
+   ```bash
+   "$(defaults read com.ameba.SwiftBar PluginDirectory 2>/dev/null || echo "$HOME/.swiftbar-plugins")/tokens.3m.py"
+   ```
+2. **确认 SwiftBar 正在使用的插件目录**：
+   ```bash
+   defaults read com.ameba.SwiftBar PluginDirectory
+   ```
+   并确认该目录下存在 `tokens.3m.py`。
+3. **确认没有被禁用**：
+   ```bash
+   defaults read com.ameba.SwiftBar DisabledPlugins
+   ```
+   如果出现 `tokens.3m.py`，重新执行 `bash install.sh` 自动解除禁用。
+4. **确认不是隐身模式**：
+   ```bash
+   defaults read com.ameba.SwiftBar StealthMode
+   ```
+   若结果是 `1`，执行：
+   ```bash
+   defaults write com.ameba.SwiftBar StealthMode -bool false
+   pkill -x SwiftBar; open -a SwiftBar
+   ```
 
 ---
 
@@ -211,7 +246,82 @@ session_value = m.group(1)
 
 ### 坑 8：SwiftBar 菜单灰色文字无法通过 `color=` 覆盖
 
-SwiftBar 遵循 macOS 原生菜单规范，没有关联 action 的 item 会被系统自动置灰，`color=` 参数无效。这是 OS 级行为，不是 bug，无法绕过。
+SwiftBar 遵循 macOS 原生菜单规范，没有关联 action 的 item 会被系统自动置灰，`color=` 参数无效。这是 OS 级行为，不是 bug，无法绕过。解决方案是给每个纯展示行加上 `bash=/usr/bin/true terminal=false`（NOOP）。
+
+### 坑 9：`osascript -e` 在 SwiftBar 环境下不可靠 ⚠️
+
+通过 `-e` 参数直接传递 AppleScript 代码给 `osascript`，在终端正常执行，但在 SwiftBar 的子进程环境中会因 shell 转义问题静默失败（returncode=0 但 stdout 为空，或报 script error）。
+
+**正确方案**：将 AppleScript 代码先写入临时 `.scpt` 文件，再用 `osascript <file.scpt>` 执行：
+
+```python
+import tempfile
+tmp = tempfile.NamedTemporaryFile(mode='w', suffix='.scpt', delete=False)
+tmp.write(applescript)
+tmp.close()
+result = subprocess.run(["osascript", tmp.name], capture_output=True, text=True, timeout=20)
+```
+
+### 坑 10：AppleScript 字符串内嵌入 JSON 会破坏解析
+
+在 AppleScript 的 `execute targetTab javascript "..."` 中，如果 JS 代码包含 JSON 对象字面量（带双引号和花括号），AppleScript 解析器会将 `{` / `"` 当作自己的语法符号，导致 "预期是行的结尾等等，却找到 '{'" 错误。
+
+错误示例（会崩溃）：
+```javascript
+// AppleScript 看到 { 和 " 后解析失败
+xhr.send({"startTime": "2026-04-09", ...})
+```
+
+正确做法 — 用 JS 单引号 key 构建对象，或用转义后的字符串变量：
+```javascript
+// 方案 A：单引号 key（属性值不含引号时可用）
+var _b = {startTime: '2026-04-09', endTime: '2026-04-09', pageNum: 1, pageSize: 10};
+xhr.send(JSON.stringify(_b));
+
+// 方案 B：字符串变量 + 反斜杠转义双引号
+var _b = "{\"startTime\": \"2026-04-09\"}";
+```
+
+> **原则**：任何传入 `execute javascript "..."` 的 JS 代码中，不能出现未转义的 `"` 和 `{` 组合。
+
+### 坑 11：不同 CB 接口的返回结构不一致
+
+Codebuddy 同一套 `/billing/meter/` 下面的接口，返回数据结构的字段名不同：
+
+| 接口 | 返回路径 |
+|------|----------|
+| `get-enterprise-user-usage`（月度） | `data.credit`, `data.limitNum`（扁平） |
+| `get-user-daily-usage`（每日） | `data.data[].credit`, `data.data[].date`（嵌套，注意不是 `data.records`） |
+
+接入新接口时必须先用 curl 或 Edge Console 确认实际返回结构，不能假设。
+
+### 坑 12：修改源码后必须同步到 SwiftBar 插件目录
+
+SwiftBar 运行的是 `~/.swiftbar-plugins/tokens.3m.py`（部署副本），**不是项目源码目录的文件**。
+
+终端测试用源码目录跑没问题，但菜单栏里永远是旧版本。
+
+每次改完代码后必须手动同步：
+```bash
+PLUGIN_DIR="$(defaults read com.ameba.SwiftBar PluginDirectory 2>/dev/null || echo $HOME/.swiftbar-plugins)"
+cp tokens.3m.py "$PLUGIN_DIR/tokens.3m.py"
+# 然后 SwiftBar 自动刷新，或点菜单中的「刷新」
+```
+
+### 坑 13：进度条字符在等宽字体外的对齐问题
+
+SwiftBar 默认使用系统等宽字体渲染，但 `█`（填充）和 `░`（空白）在某些字体下视觉宽度不同，导致进度百分比不同时整条进度条长短不一。
+
+**解决方案**：在需要精确对齐的行上加 `font=Menlo` 参数强制使用 Menlo 等宽字体：
+```
+print(f"{label}  {bar}  ... | ansi=true size=13 font=Menlo")
+```
+
+### 坑 14：CJK 标签宽度计算在 SwiftBar 中无效
+
+Python 端用 `unicodedata.east_asian_width()` 计算中文字符占 2 格、英文占 1 格来动态补空格，逻辑完全正确，但 SwiftBar 使用的是 macOS 系统等宽字体，其 CJK 字符宽度比例与 Python 计算的不一致。
+
+**解决方案**：放弃动态计算，直接硬编码空格数（如 `CC进度  `、`CB进度  `）确保视觉效果一致。
 
 ---
 
@@ -240,14 +350,15 @@ chmod 600 ~/.config/tokens-woa/cb_cookie
 ## 修改后部署
 
 ```bash
-cp tokens.3m.py ~/.swiftbar-plugins/tokens.3m.py
+PLUGIN_DIR="$(defaults read com.ameba.SwiftBar PluginDirectory 2>/dev/null || echo "$HOME/.swiftbar-plugins")"
+cp tokens.3m.py "$PLUGIN_DIR/tokens.3m.py"
 open "swiftbar://refreshplugin?name=tokens"
 ```
 
 终端测试：
 
 ```bash
-/opt/homebrew/bin/python3 tokens.3m.py
+./tokens.3m.py
 ```
 
 输出第一行是菜单栏标题，`---` 后是下拉内容，符合 SwiftBar/xbar 插件协议。

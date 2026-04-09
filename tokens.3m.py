@@ -1,8 +1,19 @@
 #!/opt/homebrew/bin/python3
-# <xbar.title>Token Budget Pacing</xbar.title>
+# <xbar.title>TokenPUA</xbar.title>
 # <xbar.desc>Monthly token usage burndown predictor for tokens.woa.com</xbar.desc>
 # <xbar.version>1.0</xbar.version>
 # <xbar.author>josephdeng</xbar.author>
+# <xbar.abouturl>https://tokens.woa.com/?product=codebuddy</xbar.abouturl>
+# <swiftbar.hideAbout>true</swiftbar.hideAbout>
+# <swiftbar.hideRunInTerminal>true</swiftbar.hideRunInTerminal>
+# <swiftbar.hideLastUpdated>true</swiftbar.hideLastUpdated>
+# <swiftbar.hideDisablePlugin>true</swiftbar.hideDisablePlugin>
+# <swiftbar.hideSwiftBar>true</swiftbar.hideSwiftBar>
+# <xbar.hideAbout>true</xbar.hideAbout>
+# <xbar.hideRunInTerminal>true</xbar.hideRunInTerminal>
+# <xbar.hideLastUpdated>true</xbar.hideLastUpdated>
+# <xbar.hideSwiftBar>true</xbar.hideSwiftBar>
+# <xbar.hideDisablePlugin>true</xbar.hideDisablePlugin>
 
 import json
 import os
@@ -11,6 +22,7 @@ import subprocess
 import sys
 import urllib.request
 import urllib.error
+import unicodedata
 from datetime import date, datetime, timedelta
 from calendar import monthrange
 from pathlib import Path
@@ -33,7 +45,8 @@ COOKIE_FILE = Path.home() / ".config" / "tokens-woa" / "cookie"
 CB_BASE_URL = "https://tencent.sso.codebuddy.cn"
 CB_ENTERPRISE_ID = "etahzsqej0n4"
 CB_COOKIE_FILE = Path.home() / ".config" / "tokens-woa" / "cb_cookie"
-CB_TOKEN_LIMIT = 150000  # 月度 token 上限
+CB_TOKEN_LIMIT = 150000  # 月度积分上限
+CB_POINTS_PER_USD = 100.0
 
 # ─── Cookie helpers (Keychain primary, file fallback) ─────
 def get_cookie():
@@ -122,7 +135,7 @@ end tell
     try:
         result = subprocess.run(
             ["osascript", "-e", applescript],
-            capture_output=True, text=True, timeout=20
+            capture_output=True, text=True, timeout=5
         )
         if result.returncode != 0:
             return None
@@ -141,16 +154,13 @@ end tell
 def api_get(path, cookie):
     """GET request to tokens API. Try Edge browser first, fall back to HTTP."""
     url = f"{BASE_URL}{path}"
-    # 优先用 Edge 内部执行
-    result = _edge_xhr_get(url)
-    if result is not None:
-        return result
+    # 跳过 Edge（超时卡死），直接 HTTP
     # 降级：直接 HTTP（需要有效 cookie）
     if not cookie:
         return None
     req = urllib.request.Request(url)
     req.add_header("Cookie", cookie)
-    req.add_header("User-Agent", "TokensPacer/1.0")
+    req.add_header("User-Agent", "TokenPUA/1.0")
     try:
         with urllib.request.urlopen(req, timeout=10, context=SSL_CTX) as resp:
             if resp.status == 200:
@@ -283,65 +293,121 @@ def set_cb_cookie(cookie_value):
     except Exception:
         pass
 
-def fetch_cb_quota_via_edge():
-    """通过 AppleScript 在 Edge 浏览器内执行 XHR，绕过 session 限制。
-    需要 Edge 已登录 tencent.sso.codebuddy.cn，且开启了 Allow JavaScript from Apple Events。
-    Returns dict with credit/limitNum, 'AUTH_EXPIRED', or None."""
+def _edge_xhr_post(path, body_js="{}", retries=1):
+    """通过 AppleScript 在 Edge 浏览器内执行同步 XHR POST。
+    path: 请求路径，body_js: JS 表达式（字符串或对象字面量），retries: 401 时重试次数。
+    Returns (status_code, response_body) 或 None。"""
+    import tempfile, time
+
     js = (
         "var xhr=new XMLHttpRequest();"
-        f"xhr.open('POST','/billing/meter/get-enterprise-user-usage',false);"
+        f"xhr.open('POST','{path}',false);"
         "xhr.setRequestHeader('Content-Type','application/json');"
         f"xhr.setRequestHeader('x-enterprise-id','{CB_ENTERPRISE_ID}');"
-        "xhr.send('{}');"
+        f"xhr.send({body_js});"
         "xhr.status+'|'+xhr.responseText;"
     )
-    applescript = f'''
-tell application "Microsoft Edge"
-    set targetTab to missing value
-    repeat with w in windows
-        repeat with t in tabs of w
-            if URL of t contains "tencent.sso.codebuddy.cn" then
-                set targetTab to t
-                exit repeat
-            end if
-        end repeat
-        if targetTab is not missing value then exit repeat
-    end repeat
-    if targetTab is missing value then
-        return "NO_TAB"
-    end if
-    return execute targetTab javascript "{js}"
-end tell
-'''
+    applescript = (
+        'tell application "Microsoft Edge"\n'
+        '    set targetTab to missing value\n'
+        '    repeat with w in windows\n'
+        '        repeat with t in tabs of w\n'
+        '            if URL of t contains "tencent.sso.codebuddy.cn" then\n'
+        '                set targetTab to t\n'
+        '                exit repeat\n'
+        '            end if\n'
+        '        end repeat\n'
+        '        if targetTab is not missing value then exit repeat\n'
+        '    end repeat\n'
+        '    if targetTab is missing value then\n'
+        '        return "NO_TAB"\n'
+        '    end if\n'
+        f'    return execute targetTab javascript "{js}"\n'
+        'end tell'
+    )
+
+    for attempt in range(retries + 1):
+        tmp = tempfile.NamedTemporaryFile(mode='w', suffix='.scpt', delete=False)
+        tmp.write(applescript)
+        tmp.close()
+
+        try:
+            result = subprocess.run(
+                ["osascript", tmp.name],
+                capture_output=True, text=True, timeout=20
+            )
+            if result.returncode != 0:
+                return None
+            output = result.stdout.strip()
+            if not output or output == "NO_TAB":
+                return None
+            status, _, body = output.partition("|")
+            status = status.strip()
+            if status in ("401", "403"):
+                if attempt < retries:
+                    time.sleep(1.5)
+                    continue
+                return ("AUTH_EXPIRED", None)
+            return (status, body)
+        except Exception:
+            return None
+        finally:
+            try:
+                os.unlink(tmp.name)
+            except Exception:
+                pass
+    return None
+
+def fetch_cb_quota_via_edge():
+    """通过 Edge AppleScript 获取 CB 月度额度。
+    Returns dict with credit/limitNum, 'AUTH_EXPIRED', or None."""
+    result = _edge_xhr_post("/billing/meter/get-enterprise-user-usage", "'{}'", retries=1)
+    if result is None:
+        return None
+    status, body = result
+    if status == "AUTH_EXPIRED":
+        return "AUTH_EXPIRED"
     try:
-        result = subprocess.run(
-            ["osascript", "-e", applescript],
-            capture_output=True, text=True, timeout=15
-        )
-        if result.returncode != 0:
-            return None
-        output = result.stdout.strip()
-        if output == "NO_TAB" or not output:
-            return None
-        status, _, body = output.partition("|")
-        if status.strip() in ("401", "403"):
-            return "AUTH_EXPIRED"
         data = json.loads(body)
         if data.get("code") == 0:
             return data.get("data", {})
-        return None
     except Exception:
+        pass
+    return None
+
+def fetch_cb_daily_usage_via_edge():
+    """通过 Edge AppleScript 获取 CB 今日消耗数据。
+    返回今日积分消耗（int），'AUTH_EXPIRED', 或 None。"""
+    today = date.today()
+    start = today.strftime("%Y-%m-%d 00:00:00")
+    end = today.strftime("%Y-%m-%d 23:59:59")
+
+    body_js = f"JSON.stringify({{startTime:'{start}',endTime:'{end}',pageNum:1,pageSize:10}})"
+    result = _edge_xhr_post("/billing/meter/get-user-daily-usage", body_js, retries=1)
+    if result is None:
         return None
+    status, body = result
+    if status == "AUTH_EXPIRED":
+        return "AUTH_EXPIRED"
+    try:
+        data = json.loads(body)
+        if data.get("code") == 0:
+            records = data.get("data", {}).get("data", [])
+            total_credit = sum(float(r.get("credit", 0)) for r in records)
+            return int(total_credit)
+    except Exception:
+        pass
+    return None
 
 def fetch_cb_quota(cb_cookie):
     """Fetch monthly token quota: try Edge AppleScript first, fall back to HTTP."""
-    # 优先用 Edge 内部执行（无 session 问题）
-    result = fetch_cb_quota_via_edge()
-    if result is not None:
-        return result
-    # 降级：直接 HTTP 请求（需要有效 cookie）
+    edge_data = fetch_cb_quota_via_edge()
+    if edge_data and edge_data != "AUTH_EXPIRED":
+        return edge_data
+
     if not cb_cookie:
-        return None
+        return edge_data if edge_data == "AUTH_EXPIRED" else None
+
     url = f"{CB_BASE_URL}/billing/meter/get-enterprise-user-usage"
     req = urllib.request.Request(url, data=b"{}", method="POST")
     req.add_header("Cookie", cb_cookie)
@@ -362,7 +428,8 @@ def fetch_cb_quota(cb_cookie):
             return "AUTH_EXPIRED"
     except Exception:
         pass
-    return None
+
+    return edge_data if edge_data == "AUTH_EXPIRED" else None
 
 # ─── Pacing logic ─────────────────────────────────────────
 def count_workdays(start_date, end_date):
@@ -457,22 +524,50 @@ def calculate_pacing(models):
         "remaining_workdays": remaining_workdays,
     }
 
-# ─── Progress bar ─────────────────────────────────────────
+# ─── UI Helpers ───────────────────────────────────────────
+# Status-aware color scheme
+STATUS_COLORS = {
+    "🟥": "#FF6B6B",   # 加速 — 红
+    "🟡": "#FFD93D",   # 稍加速/可放缓 — 黄
+    "🟢": "#6BCB77",   # 完美 — 绿
+    "🔵": "#4D96FF",   # 省着用 — 蓝
+}
+
+def get_status_color(pacing):
+    """Get hex color matching current pacing status."""
+    return STATUS_COLORS.get(pacing.get("status_icon", "🟢"), "#FFFFFF")
+
 def progress_bar(pct, width=20):
+    """Plain text progress bar (no ANSI)."""
     filled = int(pct / 100 * width)
     filled = max(0, min(width, filled))
     return "█" * filled + "░" * (width - filled)
 
+def progress_bar_ansi(pct, width=20):
+    """ANSI-colored progress bar. Use with | ansi=true."""
+    filled = int(pct / 100 * width)
+    filled = max(0, min(width, filled))
+    # Color based on percentage
+    if pct > 90:
+        fg = "\033[31m"  # red
+    elif pct > 70:
+        fg = "\033[33m"  # yellow
+    else:
+        fg = "\033[32m"  # green
+    dim = "\033[90m"     # dark gray
+    reset = "\033[0m"
+    return f"{fg}{'█' * filled}{dim}{'░' * (width - filled)}{reset}"
+
 # ─── SwiftBar output ──────────────────────────────────────
 def render_no_cookie():
     """Show when no cookie is configured."""
-    print("⚠️ Tokens: 需要登录 | color=#FF6B6B")
+    print("⚠️ TokenPUA: 需要登录 | color=#FF6B6B")
     print("---")
-    print("尚未配置 Cookie | color=#999999")
+    print("尚未配置 Cookie | color=#999999 bash=/usr/bin/true terminal=false")
     print("---")
     print("🔑 设置 Cookie | bash=/bin/bash param1=-c "
           "param2=\"cookie=$(osascript -e 'display dialog \\\"粘贴 Cookie (F12→Network→复制Cookie header):\\\" "
-          "default answer \\\"\\\" with title \\\"Tokens Cookie\\\"' -e 'text returned of result') "
+          "default answer \\\"\\\" with title \\\"TokenPUA\\\"' -e 'text returned of result') "
           "&& security delete-generic-password -s tokens-woa -a cookie 2>/dev/null; "
           "security add-generic-password -s tokens-woa -a cookie -w \\\"$cookie\\\"\" "
           "terminal=false refresh=true")
@@ -480,13 +575,13 @@ def render_no_cookie():
 
 def render_auth_expired():
     """Show when cookie has expired."""
-    print("⚠️ Tokens: Cookie 已过期 | color=#FF6B6B")
+    print("⚠️ TokenPUA: Cookie 已过期 | color=#FF6B6B")
     print("---")
-    print("Cookie 已失效，请重新登录并更新 | color=#FF6B6B")
+    print("Cookie 已失效，请重新登录并更新 | color=#FF6B6B bash=/usr/bin/true terminal=false")
     print("---")
     print("🔑 更新 Cookie | bash=/bin/bash param1=-c "
           "param2=\"cookie=$(osascript -e 'display dialog \\\"粘贴新的 Cookie (F12→Network→复制Cookie header):\\\" "
-          "default answer \\\"\\\" with title \\\"Tokens Cookie\\\"' -e 'text returned of result') "
+          "default answer \\\"\\\" with title \\\"TokenPUA\\\"' -e 'text returned of result') "
           "&& security delete-generic-password -s tokens-woa -a cookie 2>/dev/null; "
           "security add-generic-password -s tokens-woa -a cookie -w \\\"$cookie\\\"\" "
           "terminal=false refresh=true")
@@ -494,73 +589,136 @@ def render_auth_expired():
 
 def render_error(detail=""):
     """Show when API call fails."""
-    print("❌ Tokens: 请求失败 | color=#FF6B6B")
+    print("❌ TokenPUA: 请求失败 | color=#FF6B6B")
     print("---")
-    print("API 请求失败，请检查网络 | color=#999999")
+    print("API 请求失败，请检查网络 | color=#999999 bash=/usr/bin/true terminal=false")
     if detail:
-        print(f"{detail} | color=#999999 size=10")
+        print(f"{detail} | color=#999999 size=10 bash=/usr/bin/true terminal=false")
     print("---")
     print("🔄 刷新 | refresh=true")
     print(f"🌐 打开看板 | href={DASHBOARD_URL}")
 
-def render_dashboard(pacing, models, today_models, cb_data=None):
-    """Render full dashboard."""
+def render_dashboard(pacing, models, today_models, cb_data=None, cb_daily_credit=None):
+    """Render full dashboard with rich formatting."""
     p = pacing
     now = datetime.now().strftime("%H:%M")
+    sc = get_status_color(p)  # status-aware accent color
+
+    def _display_width(text):
+        return sum(2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1 for ch in text)
+
+    def _pad_label(text, width=8):
+        pad = max(0, width - _display_width(text))
+        return text + (" " * pad)
+
+    # ── Precompute common values ──
+    today = date.today()
+    _, total_days = monthrange(today.year, today.month)
+    elapsed_days = today.day  # 自然日：今天是一月中的第几天
+    time_pct = elapsed_days / total_days * 100  # 时间进度百分比
+
+    # CC (USD) 数据
+    cb_pct = p['pct']  # spent/budget*100
+    cb_spent = p['spent']
+    cb_budget = p['budget']
+
+    # CB (Codebuddy 积分) 数据
+    cc_used = 0
+    cc_limit = CB_TOKEN_LIMIT
+    cc_pct = 0
+    cc_available = False
+    cc_expired = False
+    if cb_data and cb_data != "AUTH_EXPIRED":
+        cc_used = int(cb_data.get("credit", 0))
+        cc_limit = int(cb_data.get("limitNum", CB_TOKEN_LIMIT))
+        cc_pct = cc_used / cc_limit * 100 if cc_limit else 0
+        cc_available = True
+    elif cb_data == "AUTH_EXPIRED":
+        cc_expired = True
+
+    cc_used_usd = cc_used / CB_POINTS_PER_USD
+    cc_limit_usd = cc_limit / CB_POINTS_PER_USD
+
+    # 日均额度（按工作日）
+    remaining_workdays = p['remaining_workdays']
+    daily_cb = (cb_budget - cb_spent) / max(remaining_workdays, 1)
+    daily_cc_usd = (cc_limit_usd - cc_used_usd) / max(remaining_workdays, 1)
+
+    # 今日消耗
+    today_cb_spent = sum(parse_cost(m.get("cost", "$0")) for m in today_models)
+    today_cc_usd = 0
+    if cb_daily_credit is not None and cb_daily_credit != "AUTH_EXPIRED":
+        today_cc_usd = cb_daily_credit / CB_POINTS_PER_USD
+    today_total_usd = today_cb_spent + today_cc_usd
+    daily_total_usd = daily_cb + daily_cc_usd
+
+    # 今日时间进度
+    current_hour = datetime.now().hour
+    current_minute = datetime.now().minute
+    day_time_pct = (current_hour + current_minute / 60) / 24 * 100
+
+    # 日进度百分比
+    daily_cb_pct = today_cb_spent / max(daily_cb, 0.01) * 100 if daily_cb > 0 else 0
 
     # ── Header (menu bar) ──
-    print(f"{p['status_icon']} ${p['spent']:.0f}/${p['budget']:.0f} · {p['status_text']} | size=13")
+    print(f"{p['status_icon']} ${today_total_usd:.0f}/${daily_total_usd:.0f} · {p['status_text']} | size=13")
 
     # ── Dropdown ──
     print("---")
 
-    # ══ Block 1: WOA 总额 ══
-    bar = progress_bar(p['pct'])
-    print(f"{bar}  {p['pct']:.1f}%")
-    print(f"已用 ${p['spent']:.2f}  /  月度额度 ${p['budget']:.0f}")
-    print("---")
+    # bash=/usr/bin/true gives items an action so macOS doesn't grey them out
+    NOOP = "bash=/usr/bin/true terminal=false"
 
-    # ══ Block 2: WOA 日均可用额度 ══
-    print(f"日均可用  ${p['target_daily']:.0f}  （剩余 {p['remaining_workdays']} 工作日）")
-    print("---")
+    # ══ 模块一：总额度 ══
+    print(f"月额度（$1 = 100积分） | size=11 color=#888888 {NOOP}")
+    label_time = "时间进度"
+    label_cc = "CC进度 "
+    label_cb = "CB进度 "
 
-    # ══ Block 3: Codebuddy Token 额度 ══
-    if cb_data and cb_data != "AUTH_EXPIRED":
-        used = int(cb_data.get("credit", 0))
-        limit = int(cb_data.get("limitNum", CB_TOKEN_LIMIT))
-        remaining_tokens = limit - used
-        pct_tokens = used / limit * 100 if limit else 0
-        bar_tokens = progress_bar(pct_tokens)
-        daily_tokens = remaining_tokens // max(p['remaining_workdays'], 1)
-        print(f"{bar_tokens}  {pct_tokens:.1f}%")
-        print(f"Token 已用 {used:,}  /  {limit:,}")
-        print(f"日均可用  {daily_tokens:,} tokens  （剩余 {p['remaining_workdays']} 工作日）")
-    elif cb_data == "AUTH_EXPIRED":
-        print("Codebuddy Token: Cookie 已过期 | color=#FF6B6B")
-        print("更新 CB Cookie | sfimage=key bash=/bin/bash param1=-c "
+    bar_time = progress_bar_ansi(time_pct)
+    print(f"{label_time}  {bar_time}  {time_pct:.0f}%  {elapsed_days}/{total_days}天 | ansi=true size=13 font=Menlo {NOOP}")
+    bar_cb = progress_bar_ansi(cb_pct)
+    print(f"{label_cc}  {bar_cb}  {cb_pct:.0f}%  ${cb_spent:.0f}/${cb_budget:.0f} | ansi=true size=13 font=Menlo {NOOP}")
+    if cc_available:
+        bar_cc = progress_bar_ansi(cc_pct)
+        print(f"{label_cb}  {bar_cc}  {cc_pct:.0f}%  ${cc_used_usd:.0f}/${cc_limit_usd:.0f} | ansi=true size=13 font=Menlo {NOOP}")
+    elif cc_expired:
+        print(f"{label_cb}  Cookie 已过期 | color=#FF6B6B {NOOP}")
+        print("更新 CB Cookie | bash=/bin/bash param1=-c "
               "param2=\"cookie=$(osascript -e 'display dialog \\\"粘贴 tencent.sso.codebuddy.cn Cookie:\\\" "
               "default answer \\\"\\\" with title \\\"Codebuddy Cookie\\\"' -e 'text returned of result') "
               f"&& mkdir -p {CB_COOKIE_FILE.parent} && echo \\\"$cookie\\\" > {CB_COOKIE_FILE} && chmod 600 {CB_COOKIE_FILE}\" "
               "terminal=false refresh=true")
     else:
-        print("Codebuddy Token: 未配置 | color=#999999")
-        print("设置 CB Cookie | sfimage=key bash=/bin/bash param1=-c "
+        print(f"{label_cb}  未配置 | color=#999999 {NOOP}")
+        print("设置 CB Cookie | bash=/bin/bash param1=-c "
               "param2=\"cookie=$(osascript -e 'display dialog \\\"粘贴 tencent.sso.codebuddy.cn Cookie:\\\" "
               "default answer \\\"\\\" with title \\\"Codebuddy Cookie\\\"' -e 'text returned of result') "
               f"&& mkdir -p {CB_COOKIE_FILE.parent} && echo \\\"$cookie\\\" > {CB_COOKIE_FILE} && chmod 600 {CB_COOKIE_FILE}\" "
               "terminal=false refresh=true")
     print("---")
 
-    # ── Actions ──
-    print(f"刷新 | refresh=true sfimage=arrow.clockwise")
-    print("更新 WOA Cookie | sfimage=key.fill bash=/bin/bash param1=-c "
-          "param2=\"cookie=$(osascript -e 'display dialog \\\"粘贴新的 Cookie:\\\" "
-          "default answer \\\"\\\" with title \\\"Tokens Cookie\\\"' -e 'text returned of result') "
-          "&& security delete-generic-password -s tokens-woa -a cookie 2>/dev/null; "
-          "security add-generic-password -s tokens-woa -a cookie -w \\\"$cookie\\\"\" "
-          "terminal=false refresh=true")
-    print(f"打开看板 | href={DASHBOARD_URL} sfimage=safari")
-    print(f"  {now} 更新 | color=#666666 size=10 trim=false")
+    # ══ 模块二：日额度 ══
+    print(f"日额度（{now}更新） | size=11 color=#888888 {NOOP}")
+    bar_day_time = progress_bar_ansi(day_time_pct)
+    print(f"{label_time}  {bar_day_time}  {day_time_pct:.0f}%  {current_hour:02d}:{current_minute:02d}/24:00 | ansi=true size=13 font=Menlo {NOOP}")
+    bar_daily_cb = progress_bar_ansi(min(daily_cb_pct, 100))
+    print(f"{label_cc}  {bar_daily_cb}  {daily_cb_pct:.0f}%  ${today_cb_spent:.0f}/${daily_cb:.0f} | ansi=true size=13 font=Menlo {NOOP}")
+    if cc_available:
+        if cb_daily_credit is not None and cb_daily_credit != "AUTH_EXPIRED":
+            today_cb_credit_usd = cb_daily_credit / CB_POINTS_PER_USD
+            daily_cb_pct_cb = today_cb_credit_usd / max(daily_cc_usd, 0.01) * 100 if daily_cc_usd > 0 else 0
+            bar_daily_cc = progress_bar_ansi(min(daily_cb_pct_cb, 100))
+            print(f"{label_cb}  {bar_daily_cc}  {daily_cb_pct_cb:.0f}%  ${today_cb_credit_usd:.0f}/${daily_cc_usd:.0f} | ansi=true size=13 font=Menlo {NOOP}")
+        else:
+            print(f"{label_cb}  —  /${daily_cc_usd:.0f} | color=#999999 {NOOP}")
+    elif cc_expired:
+        print(f"{label_cb}  Cookie 已过期 | color=#FF6B6B {NOOP}")
+    else:
+        print(f"{label_cb}  未配置 | color=#999999 {NOOP}")
+    print("---")
+    print("打开 CC Token 看板 | href=https://tokens.woa.com/?product=codebuddy")
+    print("打开 CB Token 看板 | href=https://tencent.sso.codebuddy.cn/profile/usage")
 
 # ─── Main ─────────────────────────────────────────────────
 def main():
@@ -591,21 +749,22 @@ def main():
 
     # Fetch codebuddy token quota
     cb_cookie = get_cb_cookie()
-    cb_data = None
-    if cb_cookie:
-        cb_data = fetch_cb_quota(cb_cookie)
+    cb_data = fetch_cb_quota(cb_cookie)
+
+    # Fetch CB daily usage (today)
+    cb_daily_credit = fetch_cb_daily_usage_via_edge()
 
     # Calculate pacing
     pacing = calculate_pacing(models)
 
     # Render
-    render_dashboard(pacing, models, today_models, cb_data)
+    render_dashboard(pacing, models, today_models, cb_data, cb_daily_credit)
 
 if __name__ == "__main__":
     try:
         main()
     except Exception as e:
-        print(f"❌ Tokens Error | color=#FF6B6B")
+        print(f"❌ TokenPUA Error | color=#FF6B6B")
         print("---")
         print(f"{type(e).__name__}: {e} | color=#FF6B6B size=10 trim=false")
         print("🔄 刷新 | refresh=true")
