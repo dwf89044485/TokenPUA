@@ -7,19 +7,62 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SOURCE_PLUGIN="$SCRIPT_DIR/tokens.3m.py"
+SOURCE_HELPER="$SCRIPT_DIR/cb_helper.py"
 DEFAULT_PLUGIN_DIR="$HOME/.swiftbar-plugins"
 SWIFTBAR_BUNDLE="com.ameba.SwiftBar"
+LAUNCH_AGENT_LABEL="com.tokenpua.cbhelper"
+LAUNCH_AGENT_PLIST="$HOME/Library/LaunchAgents/${LAUNCH_AGENT_LABEL}.plist"
+CONFIG_DIR="$HOME/.config/tokens-woa"
+LOG_DIR="$CONFIG_DIR/logs"
+HELPER_STDOUT_LOG="$LOG_DIR/cb_helper.stdout.log"
+HELPER_STDERR_LOG="$LOG_DIR/cb_helper.stderr.log"
+DEFAULT_PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
 if [ ! -f "$SOURCE_PLUGIN" ]; then
     echo "❌ 未找到插件源码: $SOURCE_PLUGIN"
     exit 1
 fi
 
+if [ ! -f "$SOURCE_HELPER" ]; then
+    echo "❌ 未找到 helper 源码: $SOURCE_HELPER"
+    exit 1
+fi
+
 echo ""
 echo "  ╔══════════════════════════════════════╗"
-echo "  ║   TokenPUA 安装工具             ║"
+echo "  ║   TokenPUA 安装工具                  ║"
 echo "  ╚══════════════════════════════════════╝"
 echo ""
+
+find_bin() {
+    local name="$1"
+    shift || true
+    for candidate in "$@"; do
+        if [ -x "$candidate" ]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+    if command -v "$name" >/dev/null 2>&1; then
+        command -v "$name"
+        return 0
+    fi
+    return 1
+}
+
+deploy_python_script() {
+    local source_file="$1"
+    local target_file="$2"
+    local tmp_file
+    tmp_file="$(mktemp)"
+    {
+        printf '#!%s\n' "$PYTHON_BIN"
+        /usr/bin/tail -n +2 "$source_file"
+    } > "$tmp_file"
+    cp "$tmp_file" "$target_file"
+    rm -f "$tmp_file"
+    chmod +x "$target_file"
+}
 
 # ─── 1. 检查 Homebrew ────────────────────────────────────
 if ! command -v brew >/dev/null 2>&1; then
@@ -30,35 +73,16 @@ fi
 echo "✅ Homebrew"
 
 # ─── 2. 检查 Python 3 ────────────────────────────────────
-PYTHON_BIN=""
-for candidate in /opt/homebrew/bin/python3 /usr/local/bin/python3; do
-    if [ -x "$candidate" ]; then
-        PYTHON_BIN="$candidate"
-        break
-    fi
-done
-
-if [ -z "$PYTHON_BIN" ] && command -v python3 >/dev/null 2>&1; then
-    PYTHON_BIN="$(command -v python3)"
-fi
-
+PYTHON_BIN="$(find_bin python3 /opt/homebrew/bin/python3 /usr/local/bin/python3 || true)"
 if [ -z "$PYTHON_BIN" ]; then
     echo "📦 安装 Python 3..."
     brew install python
-    if [ -x /opt/homebrew/bin/python3 ]; then
-        PYTHON_BIN="/opt/homebrew/bin/python3"
-    elif [ -x /usr/local/bin/python3 ]; then
-        PYTHON_BIN="/usr/local/bin/python3"
-    elif command -v python3 >/dev/null 2>&1; then
-        PYTHON_BIN="$(command -v python3)"
-    fi
+    PYTHON_BIN="$(find_bin python3 /opt/homebrew/bin/python3 /usr/local/bin/python3 || true)"
 fi
-
 if [ -z "$PYTHON_BIN" ]; then
-    echo "❌ Python 3 安装失败，未找到可执行文件"
+    echo "❌ Python 3 安装失败"
     exit 1
 fi
-
 echo "✅ Python 3 ($($PYTHON_BIN --version), path=$PYTHON_BIN)"
 
 # ─── 3. 安装 SwiftBar ───────────────────────────────────
@@ -73,65 +97,68 @@ fi
 # ─── 4. 检查 Python 依赖 ────────────────────────────────
 if ! "$PYTHON_BIN" -c "import cryptography" >/dev/null 2>&1; then
     echo "📦 安装 Python 依赖 cryptography..."
-    "$PYTHON_BIN" -m pip install cryptography --break-system-packages >/dev/null 2>&1 || \
-    "$PYTHON_BIN" -m pip install cryptography --user >/dev/null 2>&1 || true
+    if ! "$PYTHON_BIN" -m pip install cryptography --break-system-packages 2>&1; then
+        "$PYTHON_BIN" -m pip install cryptography --user 2>&1 || true
+    fi
 fi
-
 if "$PYTHON_BIN" -c "import cryptography" >/dev/null 2>&1; then
     echo "✅ cryptography"
 else
-    echo "⚠️  cryptography 未安装成功（不会阻断安装，Codebuddy 自动取 Cookie 可能不可用）"
+    echo "⚠️  cryptography 未安装成功（CC 浏览器 Cookie 自动提取不可用）"
 fi
 
-# ─── 5. 识别 SwiftBar 插件目录 ─────────────────────────
+# ─── 5. 安装 Node.js ─────────────────────────────────────
+NODE_BIN="$(find_bin node /opt/homebrew/bin/node /usr/local/bin/node || true)"
+if [ -z "$NODE_BIN" ]; then
+    echo "📦 安装 Node.js..."
+    brew install node
+    hash -r
+    NODE_BIN="$(find_bin node /opt/homebrew/bin/node /usr/local/bin/node || true)"
+fi
+if [ -z "$NODE_BIN" ]; then
+    echo "❌ Node.js 安装失败"
+    exit 1
+fi
+NPM_BIN="$(find_bin npm /opt/homebrew/bin/npm /usr/local/bin/npm || true)"
+if [ -z "$NPM_BIN" ]; then
+    echo "❌ npm 未找到"
+    exit 1
+fi
+echo "✅ Node.js ($($NODE_BIN --version), path=$NODE_BIN)"
+
+# ─── 6. 安装 agent-browser ──────────────────────────────
+AGENT_BROWSER_BIN="$(find_bin agent-browser /opt/homebrew/bin/agent-browser /usr/local/bin/agent-browser || true)"
+if [ -z "$AGENT_BROWSER_BIN" ]; then
+    echo "📦 安装 agent-browser..."
+    "$NPM_BIN" install -g agent-browser
+    hash -r
+    AGENT_BROWSER_BIN="$(find_bin agent-browser /opt/homebrew/bin/agent-browser /usr/local/bin/agent-browser || true)"
+fi
+if [ -z "$AGENT_BROWSER_BIN" ]; then
+    echo "❌ agent-browser 安装失败"
+    exit 1
+fi
+echo "🔧 初始化 agent-browser..."
+if ! "$AGENT_BROWSER_BIN" install >/dev/null 2>&1; then
+    "$AGENT_BROWSER_BIN" install
+fi
+echo "✅ agent-browser ($AGENT_BROWSER_BIN)"
+
+# ─── 7. 识别 SwiftBar 插件目录 ─────────────────────────
 PLUGIN_DIR="$(defaults read "$SWIFTBAR_BUNDLE" PluginDirectory 2>/dev/null || true)"
 if [ -z "$PLUGIN_DIR" ]; then
     PLUGIN_DIR="$DEFAULT_PLUGIN_DIR"
 fi
-mkdir -p "$PLUGIN_DIR"
-
+mkdir -p "$PLUGIN_DIR" "$CONFIG_DIR" "$LOG_DIR" "$HOME/Library/LaunchAgents"
 echo "✅ SwiftBar 插件目录: $PLUGIN_DIR"
 
-# ─── 6. 部署插件（重写 shebang 到本机 Python） ─────────
-TMP_PLUGIN="$(mktemp)"
-{
-    printf '#!%s\n' "$PYTHON_BIN"
-    /usr/bin/tail -n +2 "$SOURCE_PLUGIN"
-} > "$TMP_PLUGIN"
-
-cp "$TMP_PLUGIN" "$PLUGIN_DIR/tokens.3m.py"
-rm -f "$TMP_PLUGIN"
-chmod +x "$PLUGIN_DIR/tokens.3m.py"
-
+# ─── 8. 部署插件与 helper（重写 shebang） ───────────────
+deploy_python_script "$SOURCE_PLUGIN" "$PLUGIN_DIR/tokens.3m.py"
+deploy_python_script "$SOURCE_HELPER" "$PLUGIN_DIR/cb_helper.py"
 defaults write "$SWIFTBAR_BUNDLE" PluginDirectory "$PLUGIN_DIR" 2>/dev/null || true
+echo "✅ 已部署 tokens.3m.py 和 cb_helper.py"
 
-echo "✅ 插件已部署到 $PLUGIN_DIR/tokens.3m.py"
-
-# ─── 7. 配置 Cookie（WOA） ─────────────────────────────
-echo ""
-echo "  ┌─────────────────────────────────────────────────┐"
-echo "  │ 配置 WOA Cookie（首次必填，过期后可在菜单更新） │"
-echo "  │                                                  │"
-echo "  │ 步骤：                                           │"
-echo "  │ 1. 用浏览器打开 tokens-nbyxw43y... 并登录       │"
-echo "  │ 2. F12 → Network，点任意 /api/ 请求             │"
-echo "  │ 3. Headers 里复制 Cookie: 后面的整段值           │"
-echo "  └─────────────────────────────────────────────────┘"
-echo ""
-read -r -p "  粘贴 Cookie 值（直接回车跳过）: " COOKIE
-
-if [ -n "$COOKIE" ]; then
-    security delete-generic-password -s tokens-woa -a cookie 2>/dev/null || true
-    security add-generic-password -s tokens-woa -a cookie -w "$COOKIE"
-    mkdir -p "$HOME/.config/tokens-woa"
-    printf '%s' "$COOKIE" > "$HOME/.config/tokens-woa/cookie"
-    chmod 600 "$HOME/.config/tokens-woa/cookie"
-    echo "  ✅ WOA Cookie 已保存"
-else
-    echo "  ⏭️  已跳过（可在菜单栏里点“更新 WOA Cookie”）"
-fi
-
-# ─── 8. 如果插件被禁用，自动解除 ───────────────────────
+# ─── 9. 如果插件被禁用，自动解除 ───────────────────────
 PREF_PLIST="$HOME/Library/Preferences/${SWIFTBAR_BUNDLE}.plist"
 if [ -f "$PREF_PLIST" ] && /usr/libexec/PlistBuddy -c "Print :DisabledPlugins" "$PREF_PLIST" >/dev/null 2>&1; then
     idx=0
@@ -145,21 +172,76 @@ if [ -f "$PREF_PLIST" ] && /usr/libexec/PlistBuddy -c "Print :DisabledPlugins" "
     done
 fi
 
-# ─── 9. 启动并刷新 SwiftBar ────────────────────────────
+# ─── 10. 写入 LaunchAgent ───────────────────────────────
+: > "$HELPER_STDOUT_LOG"
+: > "$HELPER_STDERR_LOG"
+cat > "$LAUNCH_AGENT_PLIST" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>${LAUNCH_AGENT_LABEL}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>${PYTHON_BIN}</string>
+    <string>${PLUGIN_DIR}/cb_helper.py</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>${PLUGIN_DIR}</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>${DEFAULT_PATH}</string>
+    <key>TOKEN_PUA_AGENT_BROWSER</key>
+    <string>${AGENT_BROWSER_BIN}</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StartInterval</key>
+  <integer>180</integer>
+  <key>StandardOutPath</key>
+  <string>${HELPER_STDOUT_LOG}</string>
+  <key>StandardErrorPath</key>
+  <string>${HELPER_STDERR_LOG}</string>
+</dict>
+</plist>
+EOF
+launchctl bootout "gui/$(id -u)" "$LAUNCH_AGENT_PLIST" 2>/dev/null || true
+launchctl bootstrap "gui/$(id -u)" "$LAUNCH_AGENT_PLIST"
+launchctl kickstart -k "gui/$(id -u)/${LAUNCH_AGENT_LABEL}" >/dev/null 2>&1 || true
+echo "✅ CB helper 后台刷新已安装 (${LAUNCH_AGENT_LABEL})"
+
+# ─── 11. 启动 SwiftBar ──────────────────────────────────
 echo ""
 echo "🚀 启动 SwiftBar..."
 pkill -x "SwiftBar" 2>/dev/null || true
 open -a "SwiftBar" || true
 sleep 2
-open "swiftbar://refreshplugin?name=tokens" || true
-open "swiftbar://refreshallplugins" || true
+
+# ─── 12. 初始化 CC ──────────────────────────────────────
+echo ""
+echo "  正在初始化 CC 登录..."
+echo ""
+"$PYTHON_BIN" "$PLUGIN_DIR/tokens.3m.py" --setup
+
+# ─── 13. 初始化 CB helper（可见登录） ──────────────────
+echo ""
+echo "  正在初始化 CB helper..."
+echo "  如弹出 agent-browser 浏览器窗口，请在其中完成首次登录"
+echo ""
+"$PYTHON_BIN" "$PLUGIN_DIR/cb_helper.py" --interactive || true
+
+# ─── 14. 刷新 SwiftBar ──────────────────────────────────
+open "swiftbar://refreshplugin?name=tokens" 2>/dev/null || true
 
 echo ""
 echo "  ╔══════════════════════════════════════════════╗"
 echo "  ║   ✅ 安装完成                                 ║"
 echo "  ║                                              ║"
-echo "  ║   已部署插件: $PLUGIN_DIR/tokens.3m.py"
-echo "  ║   如菜单无内容，先在终端执行：               ║"
-echo "  ║   $PYTHON_BIN $PLUGIN_DIR/tokens.3m.py"
+echo "  ║   CC 已初始化，CB 将由 helper 后台刷新      ║"
+echo "  ║   如 CB 未显示，请先完成弹窗中的首次登录     ║"
 echo "  ╚══════════════════════════════════════════════╝"
+echo ""
+echo "  日志位置: $HELPER_STDERR_LOG"
 echo ""
