@@ -467,7 +467,7 @@ def render_with_records(pacing, today_used, records):
         user_input = (rec["user_input"] or "")[:30].replace("\n", " ").replace("\r", "")
         cost_str = f"¥{cost:.2f}"
         line = f"{time_str:<8}  {cost_str:<6}  {model:<15}  {tokens:>12,}  {user_input:<30}"
-        color_param = " color=#999999" if cost == 0 else ""
+        color_param = " color=#666666" if cost == 0 else ""
         print(f"{line} | size=10 font=Menlo {NOOP}{color_param}")
 
     # ── bottom hints ──────────────────
