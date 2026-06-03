@@ -10,6 +10,7 @@
 # <swiftbar.hideSwiftBar>true</swiftbar.hideSwiftBar>
 
 import json
+import logging
 import os
 import ssl
 import subprocess
@@ -19,6 +20,9 @@ import time
 from datetime import date, datetime, timedelta
 from calendar import monthrange
 from pathlib import Path
+from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 # ─── SSL ─────────────────────────────────────
 SSL_CTX = ssl.create_default_context()
@@ -34,28 +38,39 @@ CONFIG_DIR   = Path.home() / ".config" / "tokens-woa"
 COOKIE_FILE = CONFIG_DIR / "cc_cookie"
 CACHE_FILE  = CONFIG_DIR / "cache.json"
 
+# ─── Constants ─────────────────────────────
+PBKDF2_ITERATIONS = 1003
+AES_IV_SIZE = 16
+MAX_API_PAGES = 10
+API_PAGE_SIZE = 50
+REMAINING_WD_WARNING = 5
+HIGH_SPEND_THRESHOLD = 100.0
+DEFAULT_LOOKUP_DAYS = 7
+DEFAULT_MIN_COST = 0.001
+DEFAULT_RECORD_LIMIT = 50
+
 # ─── CredStore ───────────────────────────────
-def cred_read(path):
+def cred_read(path: Path) -> Optional[str]:
     try:
         if path.exists():
             v = path.read_text().strip()
             return v if v else None
-    except Exception:
-        pass
+    except (OSError, PermissionError) as e:
+        logger.warning(f"Failed to read credential {path}: {e}")
     return None
 
-def cred_write(path, value):
+def cred_write(path: Path, value: str) -> None:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(value)
         os.chmod(path, 0o600)
-    except Exception:
-        pass
+    except (OSError, PermissionError) as e:
+        logger.warning(f"Failed to write credential {path}: {e}")
 
-def get_cookie():
+def get_cookie() -> Optional[str]:
     return cred_read(COOKIE_FILE)
 
-def set_cookie(cookie):
+def set_cookie(cookie: str) -> None:
     cred_write(COOKIE_FILE, cookie)
 
 # ─── BrowserCookie ────────────────────────────
@@ -95,10 +110,11 @@ class BrowserCookie:
             if r.returncode != 0 or not r.stdout.strip():
                 return None
             pwd = r.stdout.strip().encode("utf-8")
-            key = hashlib.pbkdf2_hmac("sha1", pwd, b"saltysalt", 1003, dklen=16)
+            key = hashlib.pbkdf2_hmac("sha1", pwd, b"saltysalt", PBKDF2_ITERATIONS, dklen=AES_IV_SIZE)
             cls._key_cache[service] = key
             return key
-        except Exception:
+        except (subprocess.TimeoutExpired, subprocess.SubprocessError, KeyError) as e:
+            logger.debug(f"Failed to get key for {service}: {e}")
             return None
 
     @classmethod
@@ -110,11 +126,11 @@ class BrowserCookie:
         if enc_bytes[:3] != b"v10":
             return enc_bytes.decode("utf-8", errors="replace").strip("\x00")
         payload = enc_bytes[3:]
-        iv = b" " * 16
+        iv = b" " * AES_IV_SIZE
         dec = Cipher(algorithms.AES(key), modes.CBC(iv)).decryptor()
         raw = dec.update(payload) + dec.finalize()
         pad_len = raw[-1]
-        unpadded = raw[:-pad_len] if 1 <= pad_len <= 16 else raw
+        unpadded = raw[:-pad_len] if 1 <= pad_len <= AES_IV_SIZE else raw
         for candidate in (unpadded[32:], unpadded):
             if not candidate:
                 continue
@@ -122,8 +138,8 @@ class BrowserCookie:
                 decoded = candidate.decode("utf-8").rstrip("\x00").strip()
                 if decoded:
                     return decoded
-            except Exception:
-                pass
+            except UnicodeDecodeError:
+                continue
         return None
 
     @classmethod
@@ -152,12 +168,13 @@ class BrowserCookie:
                 cls.HOST_PATTERNS,
             ).fetchall()
             conn.close()
-        except Exception:
+        except (sqlite3.Error, OSError) as e:
+            logger.warning(f"Failed to read cookie DB {db_path}: {e}")
             return None
         finally:
             try:
                 Path(tmp).unlink()
-            except Exception:
+            except OSError:
                 pass
         cookies = {}
         seen = set()
@@ -177,7 +194,7 @@ class BrowserCookie:
         return "; ".join(f"{k}={v}" for k, v in cookies.items()) if cookies else None
 
     @classmethod
-    def extract(cls, validate=True):
+    def extract(cls, validate: bool = True) -> Optional[str]:
         for _service, browser_base in cls.BROWSERS:
             key = cls._get_key(_service)
             if not key:
@@ -205,16 +222,17 @@ class BrowserCookie:
             with urllib.request.urlopen(req, timeout=8, context=SSL_CTX) as resp:
                 body = resp.read().decode()
                 return body.strip() and not body.strip().startswith("<!")
-        except Exception:
+        except (urllib.error.URLError, OSError) as e:
+            logger.debug(f"Cookie validation failed: {e}")
             return False
-
+    
 # ─── ApiClient ────────────────────────────────
 import urllib.request
 import urllib.error
 
 class ApiClient:
     @classmethod
-    def _get(cls, path, cookie):
+    def _get(cls, path: str, cookie: str) -> tuple[bool, Optional[dict], Optional[str]]:
         url = f"{BASE_URL}{path}"
         req = urllib.request.Request(url)
         req.add_header("Cookie", cookie)
@@ -232,33 +250,34 @@ class ApiClient:
                 return False, None, "AUTH_EXPIRED"
         except json.JSONDecodeError:
             return False, None, "PARSE_ERROR"
-        except Exception:
+        except (urllib.error.URLError, OSError) as e:
+            logger.debug(f"Network error in API request: {e}")
             pass
         return False, None, "NETWORK_ERROR"
 
     @classmethod
-    def fetch_quota(cls, cookie, platform="codebuddy"):
+    def fetch_quota(cls, cookie: str, platform: str = "codebuddy") -> tuple[bool, Optional[dict], Optional[str]]:
         return cls._get(f"/api/query-quota?platform={platform}", cookie)
 
     @classmethod
-    def fetch_usage_summary(cls, cookie, start, end):
+    def fetch_usage_summary(cls, cookie: str, start: str, end: str) -> tuple[bool, Optional[dict], Optional[str]]:
         path = (f"/api/usage-summary?start_date={start}&end_date={end}"
                 f"&dimension=personal&platform={PLATFORMS}")
         return cls._get(path, cookie)
 
     @classmethod
-    def fetch_usage_details(cls, cookie, start, end, page=1):
+    def fetch_usage_details(cls, cookie: str, start: str, end: str, page: int = 1) -> tuple[bool, Optional[dict], Optional[str]]:
         path = (f"/api/usage-details?start_date={start}&end_date={end}"
-                f"&dimension=all&page={page}&page_size=50&platform=all")
+                f"&dimension=all&page={page}&page_size={API_PAGE_SIZE}&platform=all")
         return cls._get(path, cookie)
 
     @classmethod
-    def fetch_recent_high_cost(cls, cookie, days=7, min_cost=0.001, limit=50):
+    def fetch_recent_high_cost(cls, cookie: str, days: int = DEFAULT_LOOKUP_DAYS, min_cost: float = DEFAULT_MIN_COST, limit: int = DEFAULT_RECORD_LIMIT) -> list[dict]:
         """获取最近 N 天消费大于指定金额的记录"""
         records = []
         end_date = date.today()
         start_date = end_date - timedelta(days=days)
-        for page in range(1, 10):  # 最多抓 9 页
+        for page in range(1, MAX_API_PAGES + 1):
             ok, data, _ = cls.fetch_usage_details(
                 cookie, start_date.isoformat(), end_date.isoformat(), page
             )
@@ -323,7 +342,7 @@ class AuthManager:
             try:
                 if subprocess.run(cmd, capture_output=True, timeout=5).returncode == 0:
                     break
-            except Exception:
+            except subprocess.TimeoutExpired:
                 continue
         time.sleep(2)
         deadline = time.time() + timeout
@@ -336,7 +355,7 @@ class AuthManager:
         return False
 
 # ─── Pacing ─────────────────────────────────
-def count_workdays(start, end):
+def count_workdays(start: date, end: date) -> int:
     d = start
     n = 0
     while d <= end:
@@ -345,7 +364,7 @@ def count_workdays(start, end):
         d += timedelta(days=1)
     return n
 
-def calc_pacing(spent, budget, remaining_wd):
+def calc_pacing(spent: float, budget: float, remaining_wd: int) -> dict:
     today = date.today()
     _, total_days = monthrange(today.year, today.month)
     month_elapsed_pct = today.day / total_days * 100
@@ -372,7 +391,7 @@ def calc_pacing(spent, budget, remaining_wd):
         icon, text = "\U0001f535", "省着用"
 
     warning = None
-    if remaining_wd <= 5 and (budget - spent) > 100:
+    if remaining_wd <= REMAINING_WD_WARNING and (budget - spent) > HIGH_SPEND_THRESHOLD:
         warning = (f"还剩 ¥{budget - spent:.0f}，仅剩 {remaining_wd} 个工作日，建议多用 Opus")
 
     return dict(
@@ -382,12 +401,14 @@ def calc_pacing(spent, budget, remaining_wd):
         status_icon=icon, status_text=text,
         warning=warning,
         remaining_wd=remaining_wd,
+        total_days=total_days,
+        month_elapsed_pct=month_elapsed_pct,
     )
 
 # ─── UI ─────────────────────────────────────
 BAR_WIDTH = 18
 
-def ansi_bar(pct, width=BAR_WIDTH):
+def ansi_bar(pct: float, width: int = BAR_WIDTH) -> str:
     filled = max(0, min(width, int(pct / 100 * width)))
     if pct > 90:
         fg = "\033[31m"
@@ -397,7 +418,7 @@ def ansi_bar(pct, width=BAR_WIDTH):
         fg = "\033[32m"
     return f"{fg}{'█' * filled}\033[90m{'░' * (width - filled)}\033[0m"
 
-def render_no_cookie():
+def render_no_cookie() -> None:
     _dir = os.path.dirname(os.path.abspath(__file__))
     _py = sys.executable or "/usr/bin/python3"
     action = f"bash={_py} param1={_dir}/tokens.3m.py param2=--login terminal=false"
@@ -418,13 +439,15 @@ def render_error(msg):
     print("---")
     print(f"{msg} | color=#999999 size=11 bash=/usr/bin/true terminal=false")
 
-def render(pacing, today_used):
+def render(pacing: dict, today_used: float) -> None:
     NOOP = "bash=/usr/bin/true terminal=false"
     spent  = pacing["spent"]
     budget = pacing["budget"]
     pct    = pacing["pct"]
     daily_q = pacing["daily_quota"]
     rem_wd = pacing["remaining_wd"]
+    total_days = pacing["total_days"]
+    month_elapsed_pct = pacing["month_elapsed_pct"]
 
     # menu bar title
     print(f"{pacing['status_icon']} ¥{spent:.0f}/¥{budget:.0f} · {pacing['status_text']} | size=13")
@@ -432,13 +455,10 @@ def render(pacing, today_used):
 
     # ── month progress ──────────────────
     print("月进度 | size=11 color=#888888")
-    today = date.today()
-    _, total_days = monthrange(today.year, today.month)
-    month_time_pct = today.day / total_days * 100
-    bq = ansi_bar(pct)
-    print(f" 额度  {bq}  {pct:.0f}%  ¥{spent:.0f}/¥{budget:.0f} | ansi=true size=12 font=Menlo {NOOP}")
-    bt = ansi_bar(month_time_pct)
-    print(f" 时间  {bt}  {month_time_pct:.0f}%  {today.day}/{total_days}天 | ansi=true size=12 font=Menlo {NOOP}")
+    month_time_bar = ansi_bar(month_elapsed_pct)
+    month_quota_bar = ansi_bar(pct)
+    print(f" 额度  {month_quota_bar}  {pct:.0f}%  ¥{spent:.0f}/¥{budget:.0f} | ansi=true size=12 font=Menlo {NOOP}")
+    print(f" 时间  {month_time_bar}  {month_elapsed_pct:.0f}%  {date.today().day}/{total_days}天 | ansi=true size=12 font=Menlo {NOOP}")
     print("---")
 
     # ── day progress ─────────────────────
@@ -446,44 +466,56 @@ def render(pacing, today_used):
     now = datetime.now()
     day_time_pct = (now.hour * 60 + now.minute) / 1440 * 100
     day_pct = (today_used / daily_q * 100) if daily_q > 0 else 0
-    bdq = ansi_bar(min(day_pct, 100))
-    print(f" 额度  {bdq}  {day_pct:.0f}%  ¥{today_used:.1f}/¥{daily_q:.0f} | ansi=true size=12 font=Menlo {NOOP}")
-    bdt = ansi_bar(day_time_pct)
-    print(f" 时间  {bdt}  {day_time_pct:.0f}%  {now.hour:02d}:{now.minute:02d}/24:00 | ansi=true size=12 font=Menlo {NOOP}")
+    day_quota_bar = ansi_bar(min(day_pct, 100))
+    print(f" 额度  {day_quota_bar}  {day_pct:.0f}%  ¥{today_used:.1f}/¥{daily_q:.0f} | ansi=true size=12 font=Menlo {NOOP}")
+    day_time_bar = ansi_bar(day_time_pct)
+    print(f" 时间  {day_time_bar}  {day_time_pct:.0f}%  {now.hour:02d}:{now.minute:02d}/24:00 | ansi=true size=12 font=Menlo {NOOP}")
 
-def render_with_records(pacing, today_used, records):
+def render_records_table(records: list[dict]) -> None:
+    """渲染近期消费记录表格"""
     NOOP = "bash=/usr/bin/true terminal=false"
-    render(pacing, today_used)
-    if not records:
-        return
     print("---")
     print("近期消费记录 | size=11 color=#888888")
     for rec in records:
-        # 格式：时间 \t 金额 \t 模型 \t 用户消息(截断) \t token(最后一列)
-        # 使用 \t 让 SwiftBar 自动对齐列，避免中文字符宽度计算问题
+        # 格式：时间  金额  模型  token  用户消息(最后一列，可较长)
         time_str = rec["time"][5:16] if len(rec["time"]) >= 16 else rec["time"]  # MM-DD HH:MM
-        model = rec["model"][:18] if len(rec["model"]) > 18 else rec["model"]
+        model = rec["model"]
+        # Claude 模型去掉前缀 "Claude-"，节省显示宽度
+        if model.startswith("Claude-"):
+            model = model[7:]
+        model = model[:15] if len(model) > 15 else model
         cost = rec["cost"]
         tokens = rec["total_tokens"]
-        user_input = (rec["user_input"] or "").replace("\n", " ").replace("\r", "")[:25]
+        user_input = (rec["user_input"] or "").replace("\n", " ").replace("\r", "")
+        # 用户消息截到60显示宽度（中文=2宽，英文=1宽）
+        ui_trunc = ""
+        w = 0
+        for c in user_input:
+            cw = 2 if ord(c) > 127 else 1
+            if w + cw > 60:
+                break
+            ui_trunc += c
+            w += cw
 
         cost_str = f"¥{cost:.2f}"
         token_str = f"{tokens:,}"
 
-        # 用 \t 分隔，SwiftBar 会自动对齐列
-        line = f"{time_str}\t{cost_str}\t{model}\t{user_input}\t{token_str}"
+        # 用户消息放最后一列；模型列定宽10字符，token 列右对齐10字符
+        model_fixed = model[:10] if len(model) > 10 else model
+        line = f"{time_str:<10}  {cost_str:>6}    {model_fixed:<10} {token_str:>10}    {ui_trunc}"
         color_param = " color=#999999" if cost == 0 else ""
         print(f"{line} | size=10 font=Menlo {NOOP}{color_param}")
 
-    # ── bottom hints ──────────────────
-    if pacing.get("warning"):
-        print("---")
-        print(f"\u26a0\ufe0f {pacing['warning']} | size=11 color=#FF6B6B {NOOP}")
+def render_with_records(pacing: dict, today_used: float, records: list[dict]) -> None:
+    render(pacing, today_used)
+    if not records:
+        return
+    render_records_table(records)
+    time_label = render_time_label()
+    render_bottom_section(pacing, time_label)
 
-    # refresh button (left) + update time (right) same line
-    print("---")
-    print(f"打开 Token 看板 | href={DASHBOARD_URL} | size=11")
-    # 时间对比：只比较 hour:minute，忽略日期（避免 strptime 默认 1900 年问题）
+def render_time_label() -> str:
+    """计算缓存时间的可读标签"""
     cache = load_cache()
     last_time = cache.get("time", "") if cache else ""
     if last_time and " " in last_time:
@@ -498,36 +530,47 @@ def render_with_records(pacing, today_used, records):
             if diff_min < 0:
                 diff_min += 1440
             if diff_min == 0:
-                time_label = "刚刚更新"
+                return "刚刚更新"
             elif diff_min < 60:
-                time_label = f"{diff_min}分钟前更新"
+                return f"{diff_min}分钟前更新"
             else:
-                time_label = f"{diff_min // 60}小时前更新"
-        except Exception:
-            time_label = f"{last_time} 更新"
-    else:
-        time_label = "刚刚更新"
+                return f"{diff_min // 60}小时前更新"
+        except (ValueError, IndexError) as e:
+            logger.debug(f"Failed to parse time {last_time}: {e}")
+            return f"{last_time} 更新"
+    return "刚刚更新"
+
+def render_bottom_section(pacing: dict, time_label: str) -> None:
+    """渲染底部警告、链接和刷新按钮"""
+    NOOP = "bash=/usr/bin/true terminal=false"
+    if pacing.get("warning"):
+        print("---")
+        print(f"\u26a0\ufe0f {pacing['warning']} | size=11 color=#FF6B6B {NOOP}")
+
+    # refresh button (left) + update time (right) same line
+    print("---")
+    print(f"打开 Token 看板 | href={DASHBOARD_URL} | size=11")
     print(f"刷新 | refresh=true | length=80")
     print(f"{time_label} | color=#888888 size=11")
 
 # ─── Cache ──────────────────────────────────
-def save_cache(data):
+def save_cache(data: dict) -> None:
     try:
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
         CACHE_FILE.write_text(json.dumps(data, ensure_ascii=False))
-    except Exception:
-        pass
+    except (OSError, TypeError) as e:
+        logger.warning(f"Failed to save cache: {e}")
 
-def load_cache():
+def load_cache() -> Optional[dict]:
     try:
         if CACHE_FILE.exists():
             return json.loads(CACHE_FILE.read_text())
-    except Exception:
-        pass
+    except (OSError, json.JSONDecodeError) as e:
+        logger.debug(f"Failed to load cache: {e}")
     return None
 
 # ─── Main ─────────────────────────────────────
-def main():
+def main() -> None:
     cookie = AuthManager.ensure()
     if not cookie:
         render_no_cookie()
@@ -567,18 +610,19 @@ def main():
                 pass
 
     # remaining workdays
-    _, total_days = monthrange(date.today().year, date.today().month)
-    month_end = date.today().replace(day=total_days)
-    remaining_wd = count_workdays(date.today(), month_end)
+    today = date.today()
+    _, total_days = monthrange(today.year, today.month)
+    month_end = today.replace(day=total_days)
+    remaining_wd = count_workdays(today, month_end)
 
     # 近期高消费记录
-    records = ApiClient.fetch_recent_high_cost(cookie, days=7, min_cost=0, limit=45)
+    records = ApiClient.fetch_recent_high_cost(cookie, days=DEFAULT_LOOKUP_DAYS, min_cost=0, limit=45)
 
     pacing = calc_pacing(total_used, total_quota, remaining_wd)
     render_with_records(pacing, today_used, records)
     save_cache({"time": datetime.now().strftime("%m-%d %H:%M"), "spent": total_used})
 
-def handle_login():
+def handle_login() -> None:
     print("TokenPUA 登录中...")
     if AuthManager.open_login_and_wait(timeout=60):
         print("成功")
@@ -587,7 +631,7 @@ def handle_login():
     try:
         subprocess.run(["open", "swiftbar://refreshplugin?name=tokens"],
                        capture_output=True, timeout=5)
-    except Exception:
+    except subprocess.TimeoutExpired:
         pass
 
 if __name__ == "__main__":

@@ -53,14 +53,7 @@ find_bin() {
 deploy_python_script() {
     local source_file="$1"
     local target_file="$2"
-    local tmp_file
-    tmp_file="$(mktemp)"
-    {
-        printf '#!%s\n' "$PYTHON_BIN"
-        /usr/bin/tail -n +2 "$source_file"
-    } > "$tmp_file"
-    cp "$tmp_file" "$target_file"
-    rm -f "$tmp_file"
+    sed "1s|.*|#!${PYTHON_BIN}|" "$source_file" > "$target_file"
     chmod +x "$target_file"
 }
 
