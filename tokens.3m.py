@@ -459,14 +459,19 @@ def render_with_records(pacing, today_used, records):
     print("---")
     print("近期消费记录 | size=11 color=#888888")
     for rec in records:
-        # 格式：时间 金额 模型 用户输入 token（列间隔2空格）
+        # 格式：时间 \t 金额 \t 模型 \t 用户消息(截断) \t token(最后一列)
+        # 使用 \t 让 SwiftBar 自动对齐列，避免中文字符宽度计算问题
         time_str = rec["time"][5:16] if len(rec["time"]) >= 16 else rec["time"]  # MM-DD HH:MM
-        model = rec["model"][:15] if len(rec["model"]) > 15 else rec["model"]
+        model = rec["model"][:18] if len(rec["model"]) > 18 else rec["model"]
         cost = rec["cost"]
         tokens = rec["total_tokens"]
-        user_input = (rec["user_input"] or "")[:30].replace("\n", " ").replace("\r", "")
+        user_input = (rec["user_input"] or "").replace("\n", " ").replace("\r", "")[:25]
+
         cost_str = f"¥{cost:.2f}"
-        line = f"{time_str:<8}  {cost_str:<6}  {model:<15}  {tokens:>12,}  {user_input:<30}"
+        token_str = f"{tokens:,}"
+
+        # 用 \t 分隔，SwiftBar 会自动对齐列
+        line = f"{time_str}\t{cost_str}\t{model}\t{user_input}\t{token_str}"
         color_param = " color=#999999" if cost == 0 else ""
         print(f"{line} | size=10 font=Menlo {NOOP}{color_param}")
 
