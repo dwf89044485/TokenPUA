@@ -252,6 +252,39 @@ class ApiClient:
                 f"&dimension=all&page={page}&page_size=50&platform=all")
         return cls._get(path, cookie)
 
+    @classmethod
+    def fetch_recent_high_cost(cls, cookie, days=7, min_cost=0.001, limit=50):
+        """获取最近 N 天消费大于指定金额的记录"""
+        records = []
+        end_date = date.today()
+        start_date = end_date - timedelta(days=days)
+        for page in range(1, 10):  # 最多抓 9 页
+            ok, data, _ = cls.fetch_usage_details(
+                cookie, start_date.isoformat(), end_date.isoformat(), page
+            )
+            if not ok or not data:
+                break
+            for rec in data.get("data", []):
+                try:
+                    cost_str = str(rec.get("cost", "¥0")).replace("¥", "").replace(",", "")
+                    cost = float(cost_str)
+                    if cost >= min_cost:
+                        # 解析 total_tokens
+                        total_str = str(rec.get("total_tokens", "0")).replace(",", "")
+                        records.append({
+                            "time": rec.get("request_time", "")[:16],  # YYYY-MM-DD HH:MM
+                            "model": rec.get("model_name", "-"),
+                            "cost": cost,
+                            "total_tokens": int(total_str) if total_str.isdigit() else 0,
+                            "user_input": rec.get("user_input", "")[:100],  # 截断到100字符
+                        })
+                except (ValueError, TypeError):
+                    pass
+            if len(records) >= limit:
+                break
+        # API 本身已按最新时间排序，只需取前 limit 条
+        return records[:limit]
+
 # ─── AuthManager ────────────────────────────
 class AuthManager:
     LOGIN_URL = "https://token.woa.com/?product=codebuddy"
@@ -328,21 +361,19 @@ def calc_pacing(spent, budget, remaining_wd):
     ratio = actual_daily / ideal_daily if ideal_daily >= 0.01 else 999
 
     if ratio > 1.3:
-        icon, text = "\U0001f7e5", "speed up!"
+        icon, text = "\U0001f7e5", "加速"
     elif ratio > 1.1:
-        icon, text = "\U0001f7e1", "slightly faster"
+        icon, text = "\U0001f7e1", "稍加速"
     elif ratio > 0.9:
-        icon, text = "\U0001f7e2", "perfect"
+        icon, text = "\U0001f7e2", "完美"
     elif ratio > 0.7:
-        icon, text = "\U0001f7e1", "can slow down"
+        icon, text = "\U0001f7e1", "可放缓"
     else:
-        icon, text = "\U0001f535", "use sparingly"
+        icon, text = "\U0001f535", "省着用"
 
     warning = None
     if remaining_wd <= 5 and (budget - spent) > 100:
-        warning = (f"still ¥{budget - spent:.0f} left, "
-                   f"{remaining_wd} workdays, "
-                   f"suggest switch to Opus heavy use")
+        warning = (f"还剩 ¥{budget - spent:.0f}，仅剩 {remaining_wd} 个工作日，建议多用 Opus")
 
     return dict(
         spent=spent, budget=budget,
@@ -404,21 +435,39 @@ def render(pacing, today_used):
     today = date.today()
     _, total_days = monthrange(today.year, today.month)
     month_time_pct = today.day / total_days * 100
-    bt = ansi_bar(month_time_pct)
-    print(f" 时间  {bt}  {month_time_pct:.0f}%  {today.day}/{total_days}天 | ansi=true size=12 font=Menlo {NOOP}")
     bq = ansi_bar(pct)
     print(f" 额度  {bq}  {pct:.0f}%  ¥{spent:.0f}/¥{budget:.0f} | ansi=true size=12 font=Menlo {NOOP}")
+    bt = ansi_bar(month_time_pct)
+    print(f" 时间  {bt}  {month_time_pct:.0f}%  {today.day}/{total_days}天 | ansi=true size=12 font=Menlo {NOOP}")
     print("---")
 
     # ── day progress ─────────────────────
     print("日进度 | size=11 color=#888888")
     now = datetime.now()
     day_time_pct = (now.hour * 60 + now.minute) / 1440 * 100
-    bdt = ansi_bar(day_time_pct)
-    print(f" 时间  {bdt}  {day_time_pct:.0f}%  {now.hour:02d}:{now.minute:02d}/24:00 | ansi=true size=12 font=Menlo {NOOP}")
     day_pct = (today_used / daily_q * 100) if daily_q > 0 else 0
     bdq = ansi_bar(min(day_pct, 100))
     print(f" 额度  {bdq}  {day_pct:.0f}%  ¥{today_used:.1f}/¥{daily_q:.0f} | ansi=true size=12 font=Menlo {NOOP}")
+    bdt = ansi_bar(day_time_pct)
+    print(f" 时间  {bdt}  {day_time_pct:.0f}%  {now.hour:02d}:{now.minute:02d}/24:00 | ansi=true size=12 font=Menlo {NOOP}")
+
+def render_with_records(pacing, today_used, records):
+    NOOP = "bash=/usr/bin/true terminal=false"
+    render(pacing, today_used)
+    if not records:
+        return
+    print("---")
+    print("近期消费 (>¥0) | size=11 color=#888888")
+    for rec in records:
+        # 格式：时间 金额 模型 用户输入 token（列间隔2空格）
+        time_str = rec["time"][5:16] if len(rec["time"]) >= 16 else rec["time"]  # MM-DD HH:MM
+        model = rec["model"][:15] if len(rec["model"]) > 15 else rec["model"]
+        cost = rec["cost"]
+        tokens = rec["total_tokens"]
+        user_input = (rec["user_input"] or "")[:30].replace("\n", " ").replace("\r", "")
+        cost_str = f"¥{cost:.2f}"
+        line = f"{time_str:<8}  {cost_str:<6}  {model:<15}  {tokens:>12,}  {user_input:<30}"
+        print(f"{line} | size=10 font=Menlo {NOOP}")
 
     # ── bottom hints ──────────────────
     if pacing.get("warning"):
@@ -516,8 +565,11 @@ def main():
     month_end = date.today().replace(day=total_days)
     remaining_wd = count_workdays(date.today(), month_end)
 
+    # 近期高消费记录
+    records = ApiClient.fetch_recent_high_cost(cookie, days=7, min_cost=0, limit=50)
+
     pacing = calc_pacing(total_used, total_quota, remaining_wd)
-    render(pacing, today_used)
+    render_with_records(pacing, today_used, records)
     save_cache({"time": datetime.now().strftime("%m-%d %H:%M"), "spent": total_used})
 
 def handle_login():
