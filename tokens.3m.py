@@ -457,7 +457,7 @@ def render_with_records(pacing, today_used, records):
     if not records:
         return
     print("---")
-    print("近期消费 (>¥0) | size=11 color=#888888")
+    print("近期消费记录 | size=11 color=#888888")
     for rec in records:
         # 格式：时间 金额 模型 用户输入 token（列间隔2空格）
         time_str = rec["time"][5:16] if len(rec["time"]) >= 16 else rec["time"]  # MM-DD HH:MM
