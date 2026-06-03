@@ -43,8 +43,10 @@ find_bin() {
             return 0
         fi
     done
-    if command -v "$name" >/dev/null 2>&1; then
-        command -v "$name"
+    local bin_path
+    bin_path="$(command -v "$name" 2>/dev/null)"
+    if [ -n "$bin_path" ]; then
+        printf '%s\n' "$bin_path"
         return 0
     fi
     return 1
@@ -133,7 +135,7 @@ if [ -z "$AGENT_BROWSER_BIN" ]; then
 fi
 echo "🔧 初始化 agent-browser..."
 if ! "$AGENT_BROWSER_BIN" install >/dev/null 2>&1; then
-    "$AGENT_BROWSER_BIN" install
+    "$AGENT_BROWSER_BIN" install || true
 fi
 echo "✅ agent-browser ($AGENT_BROWSER_BIN)"
 

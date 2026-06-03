@@ -17,6 +17,8 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
+import urllib.request
 from datetime import date, datetime, timedelta
 from calendar import monthrange
 from pathlib import Path
@@ -48,6 +50,7 @@ HIGH_SPEND_THRESHOLD = 100.0
 DEFAULT_LOOKUP_DAYS = 7
 DEFAULT_MIN_COST = 0.001
 DEFAULT_RECORD_LIMIT = 50
+NOOP = "bash=/usr/bin/true terminal=false"
 
 # ─── CredStore ───────────────────────────────
 def cred_read(path: Path) -> Optional[str]:
@@ -130,7 +133,10 @@ class BrowserCookie:
         dec = Cipher(algorithms.AES(key), modes.CBC(iv)).decryptor()
         raw = dec.update(payload) + dec.finalize()
         pad_len = raw[-1]
-        unpadded = raw[:-pad_len] if 1 <= pad_len <= AES_IV_SIZE else raw
+        if 1 <= pad_len <= min(AES_IV_SIZE, len(raw)):
+            unpadded = raw[:-pad_len]
+        else:
+            unpadded = raw
         for candidate in (unpadded[32:], unpadded):
             if not candidate:
                 continue
@@ -252,7 +258,6 @@ class ApiClient:
             return False, None, "PARSE_ERROR"
         except (urllib.error.URLError, OSError) as e:
             logger.debug(f"Network error in API request: {e}")
-            pass
         return False, None, "NETWORK_ERROR"
 
     @classmethod
@@ -440,7 +445,6 @@ def render_error(msg):
     print(f"{msg} | color=#999999 size=11 bash=/usr/bin/true terminal=false")
 
 def render(pacing: dict, today_used: float) -> None:
-    NOOP = "bash=/usr/bin/true terminal=false"
     spent  = pacing["spent"]
     budget = pacing["budget"]
     pct    = pacing["pct"]
@@ -473,7 +477,6 @@ def render(pacing: dict, today_used: float) -> None:
 
 def render_records_table(records: list[dict]) -> None:
     """渲染近期消费记录表格"""
-    NOOP = "bash=/usr/bin/true terminal=false"
     print("---")
     print("近期消费记录 | size=11 color=#888888")
     for rec in records:
@@ -523,8 +526,9 @@ def render_time_label() -> str:
             # 提取 time 部分 "HH:MM" 进行比较
             time_part = last_time.split(" ")[1] if " " in last_time else last_time
             last_h, last_m = map(int, time_part.split(":"))
-            now_h = datetime.now().hour
-            now_m = datetime.now().minute
+            now = datetime.now()
+            now_h = now.hour
+            now_m = now.minute
             diff_min = (now_h * 60 + now_m) - (last_h * 60 + last_m)
             # 处理跨午夜的情况（虽然不太可能在这个场景）
             if diff_min < 0:
@@ -542,7 +546,6 @@ def render_time_label() -> str:
 
 def render_bottom_section(pacing: dict, time_label: str) -> None:
     """渲染底部警告、链接和刷新按钮"""
-    NOOP = "bash=/usr/bin/true terminal=false"
     if pacing.get("warning"):
         print("---")
         print(f"\u26a0\ufe0f {pacing['warning']} | size=11 color=#FF6B6B {NOOP}")
@@ -598,8 +601,8 @@ def main() -> None:
     total_quota = float((data or {}).get("total_quota", 0) or 1000)
 
     # today cost: accumulate cost field from usage-details
-    today = date.today().isoformat()
-    _, details, _ = ApiClient.fetch_usage_details(cookie, today, today)
+    today_str = date.today().isoformat()
+    _, details, _ = ApiClient.fetch_usage_details(cookie, today_str, today_str)
     today_used = 0.0
     if details and isinstance(details.get("data"), list):
         for rec in details["data"]:
