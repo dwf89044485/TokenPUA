@@ -53,6 +53,11 @@ DEFAULT_MIN_COST = 0.001
 DEFAULT_RECORD_LIMIT = 50
 NOOP = "bash=/usr/bin/true terminal=false"
 
+# 模型名称缩写映射（渲染时替换，保持表格紧凑）
+MODEL_ALIASES = {
+    "DeepSeek": "DS",
+}
+
 # ─── CredStore ───────────────────────────────
 def cred_read(path: Path) -> Optional[str]:
     try:
@@ -519,6 +524,11 @@ def render_records_table(records: list[dict]) -> None:
         # 格式：时间  金额  模型  token  用户消息(最后一列，可较长)
         time_str = rec["time"][5:16] if len(rec["time"]) >= 16 else rec["time"]  # MM-DD HH:MM
         model = rec["model"]
+        # 模型名称缩写
+        for prefix, alias in MODEL_ALIASES.items():
+            if model.startswith(prefix):
+                model = alias + model[len(prefix):]
+                break
         # Claude 模型去掉前缀 "Claude-"，节省显示宽度
         if model.startswith("Claude-"):
             model = model[7:]
