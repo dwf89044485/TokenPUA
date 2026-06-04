@@ -604,6 +604,7 @@ def render_bottom_section(pacing: dict, time_label: str) -> None:
     print(f"打开 Token 看板 | href={DASHBOARD_URL} | size=11")
     print(f"刷新 | refresh=true | length=80")
     print(f"{time_label} | color=#888888 size=11")
+    print(f"退出 TokenPUA | bash=/usr/bin/defaults param1=write param2=com.ameba.SwiftBar param3=DisabledPlugins param4=-array-add param5=tokens.3m.py terminal=false refresh=true")
 
 # ─── Cache ──────────────────────────────────
 def save_cache(data: dict) -> None:
