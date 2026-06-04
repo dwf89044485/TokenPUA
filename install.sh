@@ -207,6 +207,9 @@ if [ "$COOKIE_MODE" = "manual" ]; then
 else
     echo "  正在初始化 CC 登录（自动从浏览器提取 Cookie）..."
     echo ""
+    echo "  ⚠️  即将弹出钥匙串授权框，询问是否允许访问「Safe Storage」"
+    echo "     请点击「始终允许」（Always Allow），只点一次以后不会再弹"
+    echo ""
     "$PYTHON_BIN" "$PLUGIN_DIR/tokens.3m.py" --setup
 fi
 
