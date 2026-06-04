@@ -522,7 +522,7 @@ def render_records_table(records: list[dict]) -> None:
         # Claude 模型去掉前缀 "Claude-"，节省显示宽度
         if model.startswith("Claude-"):
             model = model[7:]
-        model = model[:15] if len(model) > 15 else model
+        model = model[:18] if len(model) > 18 else model
         cost = rec["cost"]
         tokens = rec["total_tokens"]
         user_input = (rec["user_input"] or "").replace("\n", " ").replace("\r", "")
@@ -539,9 +539,9 @@ def render_records_table(records: list[dict]) -> None:
         cost_str = f"¥{cost:.2f}"
         token_str = f"{tokens:,}"
 
-        # 用户消息放最后一列；模型列定宽10字符，token 列右对齐10字符
-        model_fixed = model[:10] if len(model) > 10 else model
-        line = f"{time_str:<10}  {cost_str:>6}    {model_fixed:<10} {token_str:>10}    {ui_trunc}"
+        # 用户消息放最后一列；模型列定宽14字符，token 列右对齐10字符
+        model_fixed = model[:14] if len(model) > 14 else model
+        line = f"{time_str:<10}  {cost_str:>6}    {model_fixed:<14} {token_str:>10}    {ui_trunc}"
         color_param = " color=#999999" if cost == 0 else ""
         print(f"{line} | size=10 font=Menlo {NOOP}{color_param}")
 
