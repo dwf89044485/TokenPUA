@@ -1,8 +1,8 @@
 #!/bin/bash
-# ═══════════════════════════════════════════════════════════
+# ═════════════════════════════════════════════════════════
 # TokenPUA — 一键安装脚本
 # macOS 菜单栏显示每月 Token 额度使用进度
-# ═══════════════════════════════════════════════════════════
+# ═════════════════════════════════════════════════════════
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -24,14 +24,14 @@ if [ ! -f "$SOURCE_PLUGIN" ]; then
 fi
 
 if [ ! -f "$SOURCE_HELPER" ]; then
-    echo "❌ 未找到 helper 源码: $SOURCE_HELPER"
-    exit 1
+    echo "⚠️  未找到 cb_helper.py，跳过 CB helper 安装"
+    SOURCE_HELPER=""
 fi
 
 echo ""
-echo "  ╔══════════════════════════════════════╗"
+echo "  ╔════════════════════════════════════╗"
 echo "  ║   TokenPUA 安装工具                  ║"
-echo "  ╚══════════════════════════════════════╝"
+echo "  ╚════════════════════════════════════╝"
 echo ""
 
 find_bin() {
@@ -147,11 +147,17 @@ fi
 mkdir -p "$PLUGIN_DIR" "$CONFIG_DIR" "$LOG_DIR" "$HOME/Library/LaunchAgents"
 echo "✅ SwiftBar 插件目录: $PLUGIN_DIR"
 
-# ─── 8. 部署插件与 helper（重写 shebang） ───────────────
+# ─── 8. 部署插件（重写 shebang） ───────────────
 deploy_python_script "$SOURCE_PLUGIN" "$PLUGIN_DIR/tokens.3m.py"
-deploy_python_script "$SOURCE_HELPER" "$PLUGIN_DIR/cb_helper.py"
+if [ -n "$SOURCE_HELPER" ]; then
+    deploy_python_script "$SOURCE_HELPER" "$PLUGIN_DIR/cb_helper.py"
+fi
 defaults write "$SWIFTBAR_BUNDLE" PluginDirectory "$PLUGIN_DIR" 2>/dev/null || true
-echo "✅ 已部署 tokens.3m.py 和 cb_helper.py"
+if [ -n "$SOURCE_HELPER" ]; then
+    echo "✅ 已部署 tokens.3m.py 和 cb_helper.py"
+else
+    echo "✅ 已部署 tokens.3m.py（cb_helper.py 不存在，跳过）"
+fi
 
 # ─── 9. 如果插件被禁用，自动解除 ───────────────────────
 PREF_PLIST="$HOME/Library/Preferences/${SWIFTBAR_BUNDLE}.plist"
@@ -167,10 +173,11 @@ if [ -f "$PREF_PLIST" ] && /usr/libexec/PlistBuddy -c "Print :DisabledPlugins" "
     done
 fi
 
-# ─── 10. 写入 LaunchAgent ───────────────────────────────
-: > "$HELPER_STDOUT_LOG"
-: > "$HELPER_STDERR_LOG"
-cat > "$LAUNCH_AGENT_PLIST" <<EOF
+# ─── 10. 写入 LaunchAgent（仅当 cb_helper.py 存在） ─────
+if [ -n "$SOURCE_HELPER" ]; then
+    : > "$HELPER_STDOUT_LOG"
+    : > "$HELPER_STDERR_LOG"
+    cat > "$LAUNCH_AGENT_PLIST" <<LAUNCHD_EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -201,11 +208,14 @@ cat > "$LAUNCH_AGENT_PLIST" <<EOF
   <string>${HELPER_STDERR_LOG}</string>
 </dict>
 </plist>
-EOF
-launchctl bootout "gui/$(id -u)" "$LAUNCH_AGENT_PLIST" 2>/dev/null || true
-launchctl bootstrap "gui/$(id -u)" "$LAUNCH_AGENT_PLIST"
-launchctl kickstart -k "gui/$(id -u)/${LAUNCH_AGENT_LABEL}" >/dev/null 2>&1 || true
-echo "✅ CB helper 后台刷新已安装 (${LAUNCH_AGENT_LABEL})"
+LAUNCHD_EOF
+    launchctl bootout "gui/$(id -u)" "$LAUNCH_AGENT_PLIST" 2>/dev/null || true
+    launchctl bootstrap "gui/$(id -u)" "$LAUNCH_AGENT_PLIST"
+    launchctl kickstart -k "gui/$(id -u)/${LAUNCH_AGENT_LABEL}" >/dev/null 2>&1 || true
+    echo "✅ CB helper 后台刷新已安装 (${LAUNCH_AGENT_LABEL})"
+else
+    echo "⚠️  cb_helper.py 不存在，跳过 LaunchAgent 安装"
+fi
 
 # ─── 11. 启动 SwiftBar ──────────────────────────────────
 echo ""
@@ -221,22 +231,24 @@ echo ""
 "$PYTHON_BIN" "$PLUGIN_DIR/tokens.3m.py" --setup
 
 # ─── 13. 初始化 CB helper（可见登录） ──────────────────
-echo ""
-echo "  正在初始化 CB helper..."
-echo "  如弹出 agent-browser 浏览器窗口，请在其中完成首次登录"
-echo ""
-"$PYTHON_BIN" "$PLUGIN_DIR/cb_helper.py" --interactive || true
+if [ -n "$SOURCE_HELPER" ]; then
+    echo ""
+    echo "  正在初始化 CB helper..."
+    echo "  如弹出 agent-browser 浏览器窗口，请在其中完成首次登录"
+    echo ""
+    "$PYTHON_BIN" "$PLUGIN_DIR/cb_helper.py" --interactive || true
+fi
 
 # ─── 14. 刷新 SwiftBar ──────────────────────────────────
 open "swiftbar://refreshplugin?name=tokens" 2>/dev/null || true
 
 echo ""
-echo "  ╔══════════════════════════════════════════════╗"
+echo "  ╔════════════════════════════════════════════╗"
 echo "  ║   ✅ 安装完成                                 ║"
 echo "  ║                                              ║"
 echo "  ║   CC 已初始化，CB 将由 helper 后台刷新      ║"
 echo "  ║   如 CB 未显示，请先完成弹窗中的首次登录     ║"
-echo "  ╚══════════════════════════════════════════════╝"
+echo "  ╚════════════════════════════════════════════╝"
 echo ""
 echo "  日志位置: $HELPER_STDERR_LOG"
 echo ""
