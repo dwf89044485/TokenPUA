@@ -350,7 +350,15 @@ class AuthManager:
         return ok
 
     @classmethod
-    def open_login_and_wait(cls, timeout=60):
+    def open_login_and_wait(cls, timeout=120):
+        if cls._mode() == "manual":
+            return False  # 手动模式：不读浏览器，用户从菜单「手动输入Cookie」填入
+        cookie = BrowserCookie.extract(validate=True)
+        if cookie:
+            set_cookie(cookie)
+            return True
+        # 不行再打开浏览器让用户登录
+        app_opened = False
         for cmd in (
             ["open", "-a", "Microsoft Edge", cls.LOGIN_URL],
             ["open", "-a", "Google Chrome", cls.LOGIN_URL],
@@ -358,9 +366,12 @@ class AuthManager:
         ):
             try:
                 if subprocess.run(cmd, capture_output=True, timeout=5).returncode == 0:
+                    app_opened = True
                     break
-            except subprocess.TimeoutExpired:
+            except (subprocess.TimeoutExpired, OSError):
                 continue
+        if not app_opened:
+            return False
         time.sleep(2)
         deadline = time.time() + timeout
         while time.time() < deadline:

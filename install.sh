@@ -1,8 +1,13 @@
 #!/bin/bash
-# ═══════════════════════════════════════════════════════
+# ════════════════════════════════════════════════════
 # TokenPUA — 一键安装脚本
 # macOS 菜单栏显示每月 Token 额度使用进度
-# ═══════════════════════════════════════════════════════
+#
+# 用法:
+#   bash install.sh             交互式选择 Cookie 获取方式
+#   bash install.sh --auto     自动从浏览器提取 Cookie
+#   bash install.sh --manual   手动输入 Cookie
+# ════════════════════════════════════════════════════
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -10,7 +15,21 @@ SOURCE_PLUGIN="$SCRIPT_DIR/tokens.3m.py"
 DEFAULT_PLUGIN_DIR="$HOME/.swiftbar-plugins"
 SWIFTBAR_BUNDLE="com.ameba.SwiftBar"
 CONFIG_DIR="$HOME/.config/tokens-woa"
-DEFAULT_PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+COOKIE_MODE=""  # auto | manual | ""
+
+# ─── 解析参数 ──────────────────────────────────────────
+for arg in "$@"; do
+    case "$arg" in
+        --auto)   COOKIE_MODE="auto" ;;
+        --manual) COOKIE_MODE="manual" ;;
+        --help|-h)
+            echo "用法: bash install.sh [--auto|--manual]"
+            echo "  --auto    自动从浏览器提取 Cookie（需要 cryptography + Keychain 访问权限）"
+            echo "  --manual  手动输入 Cookie（无需安装额外依赖，Cookie 过期后需重新输入）"
+            exit 0
+            ;;
+    esac
+done
 
 if [ ! -f "$SOURCE_PLUGIN" ]; then
     echo "❌ 未找到插件源码: $SOURCE_PLUGIN"
@@ -18,9 +37,46 @@ if [ ! -f "$SOURCE_PLUGIN" ]; then
 fi
 
 echo ""
-echo "  ╔════════════════════════════════╗"
-echo "  ║   TokenPUA 安装工具                  ║"
-echo "  ╚════════════════════════════════╝"
+echo "  ╔══════════════════════════════╗"
+echo "  ║   TokenPUA 安装工具           ║"
+echo "  ╚══════════════════════════════╝"
+echo ""
+
+# ─── Cookie 模式选择 ──────────────────────────────────
+if [ -z "$COOKIE_MODE" ]; then
+    echo "请选择 Cookie 获取方式："
+    echo ""
+    echo "  [1] 自动提取（推荐）"
+    echo "      ✅ 无需手动操作，安装完成后即生效"
+    echo "      ✅ Cookie 过期后自动从浏览器刷新，无需重新配置"
+    echo "      ⚠️  需要安装 cryptography 依赖"
+    echo "      ⚠️  需要访问浏览器 Keychain（可能弹出密码提示）"
+    echo ""
+    echo "  [2] 手动输入"
+    echo "      ✅ 无需安装 cryptography"
+    echo "      ✅ 无需访问 Keychain，无弹窗"
+    echo "      ⚠️  Cookie 过期后需手动重新填入"
+    echo ""
+    printf "选择 [1/2，默认 1]: "
+    read -r choice
+    if [ "$choice" = "2" ]; then
+        COOKIE_MODE="manual"
+    else
+        COOKIE_MODE="auto"
+    fi
+fi
+
+echo ""
+if [ "$COOKIE_MODE" = "manual" ]; then
+    echo "🔧 Cookie 模式：手动输入"
+else
+    echo "🔧 Cookie 模式：自动提取"
+fi
+
+# 持久化模式标记
+mkdir -p "$CONFIG_DIR"
+printf '%s\n' "$COOKIE_MODE" > "$CONFIG_DIR/mode"
+
 echo ""
 
 find_bin() {
@@ -78,17 +134,23 @@ else
     echo "✅ SwiftBar"
 fi
 
-# ─── 4. 检查 Python 依赖 ────────────────────────────────
-if ! "$PYTHON_BIN" -c "import cryptography" >/dev/null 2>&1; then
-    echo "📦 安装 Python 依赖 cryptography..."
-    if ! "$PYTHON_BIN" -m pip install cryptography --break-system-packages 2>&1; then
-        "$PYTHON_BIN" -m pip install cryptography --user 2>&1 || true
+# ─── 4. 检查 Python 依赖（仅自动模式需要）───────────────────────
+if [ "$COOKIE_MODE" = "auto" ]; then
+    if ! "$PYTHON_BIN" -c "import cryptography" >/dev/null 2>&1; then
+        echo "📦 安装 Python 依赖 cryptography..."
+        if ! "$PYTHON_BIN" -m pip install cryptography --break-system-packages 2>&1; then
+            "$PYTHON_BIN" -m pip install cryptography --user 2>&1 || true
+        fi
     fi
-fi
-if "$PYTHON_BIN" -c "import cryptography" >/dev/null 2>&1; then
-    echo "✅ cryptography"
+    if "$PYTHON_BIN" -c "import cryptography" >/dev/null 2>&1; then
+        echo "✅ cryptography"
+    else
+        echo "⚠️  cryptography 未安装成功，将切换为手动输入 Cookie 模式"
+        echo "   如需自动提取，请手动安装: $PYTHON_BIN -m pip install cryptography"
+        COOKIE_MODE="manual"
+    fi
 else
-    echo "⚠️  cryptography 未安装成功（CC 浏览器 Cookie 自动提取不可用）"
+    echo "⏭️  跳过 cryptography 安装（手动模式）"
 fi
 
 # ─── 5. 识别 SwiftBar 插件目录 ─────────────────────────
@@ -125,19 +187,39 @@ pkill -x "SwiftBar" 2>/dev/null || true
 open -a "SwiftBar" || true
 sleep 2
 
-# ─── 9. 初始化 CC ──────────────────────────────────────
+# ─── 9. 初始化 CC（根据模式分支）─────────────────────────────
 echo ""
-echo "  正在初始化 CC 登录..."
-echo ""
-"$PYTHON_BIN" "$PLUGIN_DIR/tokens.3m.py" --setup
+if [ "$COOKIE_MODE" = "manual" ]; then
+    echo "  请手动输入 CC Cookie："
+    echo "  获取方式：在浏览器登录 token.woa.com 后，"
+    echo "  打开开发者工具 → Application → Cookies → 复制全部 Cookie"
+    echo ""
+    printf "  粘贴 Cookie: "
+    read -r user_cookie
+    if [ -n "$user_cookie" ]; then
+        mkdir -p "$CONFIG_DIR"
+        echo "$user_cookie" > "$CONFIG_DIR/cc_cookie"
+        chmod 600 "$CONFIG_DIR/cc_cookie"
+        echo "✅ Cookie 已保存"
+    else
+        echo "⚠️  未输入 Cookie，稍后可在菜单栏点击「点击登录」手动输入"
+    fi
+else
+    echo "  正在初始化 CC 登录（自动从浏览器提取 Cookie）..."
+    echo ""
+    "$PYTHON_BIN" "$PLUGIN_DIR/tokens.3m.py" --setup
+fi
 
 # ─── 10. 刷新 SwiftBar ──────────────────────────────────
 open "swiftbar://refreshplugin?name=tokens" 2>/dev/null || true
 
 echo ""
-echo "  ╔════════════════════════════════╗"
-echo "  ║   ✅ 安装完成                                 ║"
-echo "  ║                                              ║"
-echo "  ║   CC 已初始化，菜单栏即可看到进度         ║"
-echo "  ╚════════════════════════════════╝"
+echo "  ╔══════════════════════════════╗"
+echo "  ║   ✅ 安装完成                 ║"
+if [ "$COOKIE_MODE" = "manual" ]; then
+    echo "  ║                              ║"
+    echo "  ║   Cookie 手动模式             ║"
+    echo "  ║   Cookie 过期后需重新输入     ║"
+fi
+echo "  ╚══════════════════════════════╝"
 echo ""
