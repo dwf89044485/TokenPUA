@@ -555,7 +555,16 @@ def render_records_table(records: list[dict]) -> None:
         # 用户消息放最后一列；模型列定宽10字符，token 列右对齐10字符
         model_fixed = model[:10] if len(model) > 10 else model
         line = f"{time_str:<10}  {cost_str:>6}    {model_fixed:<10} {token_str:>10}    {ui_trunc}"
-        color_param = " color=#999999" if cost == 0 else ""
+        if cost > 100:
+            color_param = " color=#990000"
+        elif cost > 50:
+            color_param = " color=#BB2222"
+        elif cost > 20:
+            color_param = " color=#CC9900"
+        elif cost == 0:
+            color_param = " color=#999999"
+        else:
+            color_param = ""
         print(f"{line} | size=11 font=Menlo {NOOP}{color_param}")
 
 def render_with_records(pacing: dict, today_used: float, records: list[dict]) -> None:
