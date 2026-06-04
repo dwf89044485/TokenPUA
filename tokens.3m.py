@@ -535,7 +535,7 @@ def render_records_table(records: list[dict]) -> None:
         model = model[:18] if len(model) > 18 else model
         cost = rec["cost"]
         tokens = rec["total_tokens"]
-        user_input = (rec["user_input"] or "").replace("\n", " ").replace("\r", "")
+        user_input = (rec["user_input"] or "").replace("\n", " ").replace("\r", "").replace("|", "｜")
         # 用户消息截到60显示宽度（中文=2宽，英文=1宽）
         ui_trunc = ""
         w = 0
@@ -545,6 +545,9 @@ def render_records_table(records: list[dict]) -> None:
                 break
             ui_trunc += c
             w += cw
+
+        # 避免消息里的 | 被 SwiftBar 当成参数分隔符解析
+        ui_trunc = ui_trunc.replace("|", "｜")
 
         cost_str = f"¥{cost:.2f}"
         token_str = f"{tokens:,}"
