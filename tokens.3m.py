@@ -579,12 +579,12 @@ def main() -> None:
         render_no_cookie()
         return
 
-    ok, data, err = ApiClient.fetch_quota(cookie, platform="codebuddy")
+    ok, data, err = ApiClient.fetch_quota(cookie, platform="all")
     if err == "AUTH_EXPIRED":
         new_cookie = AuthManager.refresh(cookie)
         if new_cookie:
             cookie = new_cookie
-            ok, data, err = ApiClient.fetch_quota(cookie, platform="codebuddy")
+            ok, data, err = ApiClient.fetch_quota(cookie, platform="all")
         if not ok:
             render_auth_expired()
             return
