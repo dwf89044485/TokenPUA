@@ -38,6 +38,7 @@ DASHBOARD_URL = "https://token.woa.com/?product=codebuddy"
 
 CONFIG_DIR   = Path.home() / ".config" / "tokens-woa"
 COOKIE_FILE = CONFIG_DIR / "cc_cookie"
+MODE_FILE   = CONFIG_DIR / "mode"    # "auto" or "manual"
 CACHE_FILE  = CONFIG_DIR / "cache.json"
 
 # ─── Constants ─────────────────────────────
@@ -314,10 +315,19 @@ class AuthManager:
     LOGIN_URL = "https://token.woa.com/?product=codebuddy"
 
     @classmethod
+    def _mode(cls) -> str:
+        try:
+            return MODE_FILE.read_text().strip()
+        except (OSError, IOError):
+            return "auto"
+
+    @classmethod
     def ensure(cls):
         cookie = get_cookie()
         if cookie and cls._is_valid(cookie):
             return cookie
+        if cls._mode() == "manual":
+            return None  # 手动模式：不尝试自动提取
         new_cookie = BrowserCookie.extract(validate=True)
         if new_cookie:
             set_cookie(new_cookie)
@@ -326,6 +336,8 @@ class AuthManager:
 
     @classmethod
     def refresh(cls, old_cookie):
+        if cls._mode() == "manual":
+            return None
         new_cookie = BrowserCookie.extract(validate=False)
         if new_cookie and new_cookie != old_cookie:
             set_cookie(new_cookie)
@@ -423,21 +435,34 @@ def ansi_bar(pct: float, width: int = BAR_WIDTH) -> str:
         fg = "\033[32m"
     return f"{fg}{'█' * filled}\033[90m{'░' * (width - filled)}\033[0m"
 
+def _is_manual_mode() -> bool:
+    return AuthManager._mode() == "manual"
+
 def render_no_cookie() -> None:
     _dir = os.path.dirname(os.path.abspath(__file__))
     _py = sys.executable or "/usr/bin/python3"
-    action = f"bash={_py} param1={_dir}/tokens.3m.py param2=--login terminal=false"
     print("\u26a0\ufe0f TokenPUA: 需要登录 | color=#FF6B6B")
     print("---")
-    print(f"\U0001f512 点击登录 | {action}")
+    if _is_manual_mode():
+        print(f"\U0001f512 手动输入 Cookie | bash={_py} param1={_dir}/tokens.3m.py param2=--prompt-cookie terminal=true")
+        print("如何获取 Cookie： | color=#888888 size=11 {NOOP}")
+        print("  1. 浏览器打开 token.woa.com 并登录 | color=#888888 size=11 {NOOP}")
+        print("  2. F12 → Application → Cookies | color=#888888 size=11 {NOOP}")
+        print("  3. 复制所有 Cookie（格式：name=value; ...）| color=#888888 size=11 {NOOP}")
+    else:
+        action = f"bash={_py} param1={_dir}/tokens.3m.py param2=--login terminal=false"
+        print(f"\U0001f512 点击登录 | {action}")
 
 def render_auth_expired():
     _dir = os.path.dirname(os.path.abspath(__file__))
     _py = sys.executable or "/usr/bin/python3"
-    action = f"bash={_py} param1={_dir}/tokens.3m.py param2=--login terminal=false"
     print("\u26a0\ufe0f TokenPUA: 登录已过期 | color=#FF6B6B")
     print("---")
-    print(f"\U0001f512 点击重新登录 | {action}")
+    if _is_manual_mode():
+        print(f"\U0001f512 重新输入 Cookie | bash={_py} param1={_dir}/tokens.3m.py param2=--prompt-cookie terminal=true")
+    else:
+        action = f"bash={_py} param1={_dir}/tokens.3m.py param2=--login terminal=false"
+        print(f"\U0001f512 点击重新登录 | {action}")
 
 def render_error(msg):
     print("\u274c TokenPUA: 请求失败 | color=#FF6B6B")
@@ -579,12 +604,12 @@ def main() -> None:
         render_no_cookie()
         return
 
-    ok, data, err = ApiClient.fetch_quota(cookie, platform="all")
+    ok, data, err = ApiClient.fetch_quota(cookie, platform="codebuddy")
     if err == "AUTH_EXPIRED":
         new_cookie = AuthManager.refresh(cookie)
         if new_cookie:
             cookie = new_cookie
-            ok, data, err = ApiClient.fetch_quota(cookie, platform="all")
+            ok, data, err = ApiClient.fetch_quota(cookie, platform="codebuddy")
         if not ok:
             render_auth_expired()
             return
@@ -628,19 +653,61 @@ def main() -> None:
 def handle_login() -> None:
     print("TokenPUA 登录中...")
     if AuthManager.open_login_and_wait(timeout=60):
-        print("成功")
+        print("✅ 成功")
     else:
-        print("超时，请从菜单重试")
+        print("⚠️ 超时，请从菜单重试")
     try:
         subprocess.run(["open", "swiftbar://refreshplugin?name=tokens"],
                        capture_output=True, timeout=5)
     except subprocess.TimeoutExpired:
         pass
 
+def handle_set_cookie() -> None:
+    """从 stdin 读取用户手动提供的 Cookie 并保存"""
+    import sys
+    cookie = sys.stdin.read().strip()
+    if not cookie:
+        print("❌ 未收到 Cookie")
+        sys.exit(1)
+    set_cookie(cookie)
+    print("✅ Cookie 已保存")
+    try:
+        subprocess.run(["open", "swiftbar://refreshplugin?name=tokens"],
+                       capture_output=True, timeout=5)
+    except subprocess.TimeoutExpired:
+        pass
+
+def handle_prompt_cookie() -> None:
+    """弹出 AppleScript 输入框让用户输入 Cookie"""
+    _dir = os.path.dirname(os.path.abspath(__file__))
+    _py = sys.executable or "/usr/bin/python3"
+    # 写入临时 AppleScript 文件（避免 Shell 转义问题）
+    script = f'''tell application "System Events"
+        display dialog "请粘贴 CC Cookie:\\n\\n获取方式：\\n1. 浏览器打开 token.woa.com 并登录\\n2. F12 → Application → Cookies\\n3. 复制全部 Cookie（格式：name=value; ...）" default answer "" with title "TokenPUA — 输入 Cookie" buttons {{"取消", "确定"}} default button 2
+        set cookie to text returned of result
+        do shell script "\\\\"{_py}\\" \\\\\"{_dir}/tokens.3m.py\\\\" --set-cookie <<< " & quoted form of cookie
+    end tell'''
+    import tempfile
+    scpt = tempfile.NamedTemporaryFile(suffix=".scpt", delete=False, mode="w")
+    scpt.write(script)
+    scpt.close()
+    subprocess.run(["osascript", scpt.name], capture_output=True, timeout=120)
+    try:
+        os.unlink(scpt.name)
+    except OSError:
+        pass
+
 if __name__ == "__main__":
     try:
-        if len(sys.argv) > 1 and sys.argv[1] == "--login":
+        arg = sys.argv[1] if len(sys.argv) > 1 else ""
+        if arg in ("--login", "--setup"):
             handle_login()
+            sys.exit(0)
+        if arg == "--set-cookie":
+            handle_set_cookie()
+            sys.exit(0)
+        if arg == "--prompt-cookie":
+            handle_prompt_cookie()
             sys.exit(0)
         main()
     except Exception as e:
