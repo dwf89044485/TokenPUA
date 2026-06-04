@@ -102,10 +102,52 @@ class BrowserCookie:
          "Arc"),
     ]
 
+    # Bundle ID → Keychain 服务名映射
+    BUNDLE_MAP = {
+        "com.google.Chrome":          "Chrome Safe Storage",
+        "com.microsoft.edgemac":      "Microsoft Edge Safe Storage",
+        "com.brave.Browser":          "Brave Safe Storage",
+        "company.thebrowser.Browser": "Arc Safe Storage",
+    }
+
     @classmethod
     def _browsers(cls):
         """返回本机已安装的浏览器列表"""
         return [(s, p) for s, p, _ in cls.BROWSER_CANDIDATES if p.exists()]
+
+    @classmethod
+    def _default_browser(cls):
+        """检测系统默认浏览器对应的 (service, data_dir)，找不到返回 None"""
+        try:
+            r = subprocess.run(
+                ["defaults", "read", "com.apple.LaunchServices/com.apple.launchservices.secure"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if r.returncode != 0:
+                return None
+            # 从 plist 输出中找 https 对应的 handler
+            in_https = False
+            for line in r.stdout.splitlines():
+                line = line.strip()
+                if 'LSHandlerURLScheme = "https"' in line:
+                    in_https = True
+                elif in_https and 'LSHandlerRoleAll' in line:
+                    parts = line.split("=", 1)
+                    if len(parts) == 2:
+                        bundle_id = parts[1].strip().strip('";')
+                        service = cls.BUNDLE_MAP.get(bundle_id)
+                        if not service:
+                            return None
+                        # 找对应的数据目录
+                        for s, p, _ in cls.BROWSER_CANDIDATES:
+                            if s == service and p.exists():
+                                return (s, p)
+                    break
+                elif in_https and line.startswith(")"):
+                    break  # https 块结束但没找到 handler，忽略
+        except (subprocess.TimeoutExpired, subprocess.SubprocessError, OSError):
+            pass
+        return None
 
     HOST_PATTERNS = (
         "%token.woa.com%",
@@ -222,7 +264,21 @@ class BrowserCookie:
 
     @classmethod
     def extract(cls, validate: bool = True) -> Optional[str]:
+        # 先试默认浏览器（只碰一次钥匙串）
+        default = cls._default_browser()
+        if default:
+            service, base = default
+            key = cls._get_key(service)
+            if key:
+                for db_path in cls._iter_dbs(base):
+                    cookie_str = cls._read_db(db_path, key)
+                    if cookie_str and (not validate or cls._check_cookie(cookie_str)):
+                        return cookie_str
+        # 默认浏览器不行，再逐个试其他已安装的
         for service, browser_base in cls._browsers():
+            # 跳过默认浏览器（已试过，且 key 已缓存不会再次弹窗）
+            if default and (service, browser_base) == default:
+                continue
             key = cls._get_key(service)
             if not key:
                 continue
