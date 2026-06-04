@@ -553,7 +553,7 @@ def render_records_table(records: list[dict]) -> None:
         model_fixed = model[:10] if len(model) > 10 else model
         line = f"{time_str:<10}  {cost_str:>6}    {model_fixed:<10} {token_str:>10}    {ui_trunc}"
         color_param = " color=#999999" if cost == 0 else ""
-        print(f"{line} | size=10 font=Menlo {NOOP}{color_param}")
+        print(f"{line} | size=10 {NOOP}{color_param}")
 
 def render_with_records(pacing: dict, today_used: float, records: list[dict]) -> None:
     render(pacing, today_used)
