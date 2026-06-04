@@ -34,12 +34,13 @@ SSL_CTX.verify_mode = ssl.CERT_NONE
 # ─── Config ───────────────────────────────────
 BASE_URL   = "https://token.woa.com"
 PLATFORMS = "all"
-DASHBOARD_URL = "https://token.woa.com/?product=codebuddy"
+DASHBOARD_URL = "https://token.woa.com/"
 
 CONFIG_DIR   = Path.home() / ".config" / "tokens-woa"
 COOKIE_FILE = CONFIG_DIR / "cc_cookie"
 MODE_FILE   = CONFIG_DIR / "mode"    # "auto" or "manual"
 CACHE_FILE  = CONFIG_DIR / "cache.json"
+KEY_CACHE   = CONFIG_DIR / "safe_storage_key"
 
 # ─── Constants ─────────────────────────────
 PBKDF2_ITERATIONS = 1003
@@ -111,6 +112,15 @@ class BrowserCookie:
         import hashlib
         if service in cls._key_cache:
             return cls._key_cache[service]
+        # 文件缓存：避免每次刷新都调 security（钥匙串弹窗干扰）
+        if KEY_CACHE.exists():
+            try:
+                cached = KEY_CACHE.read_bytes()
+                if len(cached) == AES_IV_SIZE:
+                    cls._key_cache[service] = cached
+                    return cached
+            except OSError:
+                pass
         try:
             r = subprocess.run(
                 ["security", "find-generic-password", "-w", "-s", service],
@@ -121,6 +131,13 @@ class BrowserCookie:
             pwd = r.stdout.strip().encode("utf-8")
             key = hashlib.pbkdf2_hmac("sha1", pwd, b"saltysalt", PBKDF2_ITERATIONS, dklen=AES_IV_SIZE)
             cls._key_cache[service] = key
+            # 持久化到文件，后续不再弹窗
+            try:
+                CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+                KEY_CACHE.write_bytes(key)
+                KEY_CACHE.chmod(0o600)
+            except OSError:
+                pass
             return key
         except (subprocess.TimeoutExpired, subprocess.SubprocessError, KeyError) as e:
             logger.debug(f"Failed to get key for {service}: {e}")
@@ -519,10 +536,10 @@ def render(pacing: dict, today_used: float) -> None:
 def render_records_table(records: list[dict]) -> None:
     """渲染近期消费记录表格"""
     print("---")
-    print("近期消费记录")
+    print("明细 | size=11 color=#888888")
     for rec in records:
         # 格式：时间  金额  模型  token  用户消息(最后一列，可较长)
-        time_str = rec["time"][5:16] if len(rec["time"]) >= 16 else rec["time"]  # MM-DD HH:MM
+        time_str = rec["time"][11:16] if len(rec["time"]) >= 16 else rec["time"]  # HH:MM
         model = rec["model"]
         # 模型名称缩写
         for prefix, alias in MODEL_ALIASES.items():
@@ -549,19 +566,19 @@ def render_records_table(records: list[dict]) -> None:
         # 避免消息里的 | 被 SwiftBar 当成参数分隔符解析
         ui_trunc = ui_trunc.replace("|", "｜")
 
-        cost_str = f"¥{cost:.2f}"
+        cost_str = f"¥{cost:.3f}"
         token_str = f"{tokens:,}"
 
         # 用户消息放最后一列；模型列定宽10字符，token 列右对齐10字符
         model_fixed = model[:10] if len(model) > 10 else model
-        line = f"{time_str:<10}  {cost_str:>6}    {model_fixed:<10} {token_str:>10}    {ui_trunc}"
+        line = f"{time_str:<5}  {cost_str:>8}    {model_fixed:<10} {token_str:>10}    {ui_trunc}"
         if cost > 100:
             color_param = " color=#990000"
         elif cost > 50:
             color_param = " color=#BB2222"
         elif cost > 20:
             color_param = " color=#CC9900"
-        elif cost == 0:
+        elif cost < 0.0005:
             color_param = " color=#999999"
         else:
             color_param = ""
@@ -606,13 +623,12 @@ def render_bottom_section(pacing: dict, time_label: str) -> None:
     """渲染底部警告、链接和刷新按钮"""
     if pacing.get("warning"):
         print("---")
-        print(f"\u26a0\ufe0f {pacing['warning']} | size=11 color=#FF6B6B {NOOP}")
+        print(f"⚠️ {pacing['warning']} | size=11 color=#FF6B6B {NOOP}")
 
-    # refresh button (left) + update time (right) same line
+    # 底部：打开看板 / 刷新（含时间标签） / 退出
     print("---")
     print(f"打开 Token 看板 | href={DASHBOARD_URL} | size=11")
-    print(f"刷新 | refresh=true | length=80")
-    print(f"{time_label} | color=#888888 size=11")
+    print(f"刷新（{time_label}） | refresh=true")
     print(f"退出 TokenPUA | bash=/usr/bin/defaults param1=write param2=com.ameba.SwiftBar param3=DisabledPlugins param4=-array-add param5=tokens.3m.py terminal=false refresh=true")
 
 # ─── Cache ──────────────────────────────────
