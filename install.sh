@@ -10,13 +10,39 @@
 # ════════════════════════════════════════════════════
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-SOURCE_PLUGIN="$SCRIPT_DIR/tokens.3m.py"
+GITHUB_RAW="https://raw.githubusercontent.com/dwf89044485/TokenPUA/master"
+SOURCE_DIR="$HOME/.config/tokens-woa/sources"
 DEFAULT_PLUGIN_DIR="$HOME/.swiftbar-plugins"
 SWIFTBAR_BUNDLE="com.ameba.SwiftBar"
 CONFIG_DIR="$HOME/.config/tokens-woa"
 VENV_DIR="$HOME/.swiftbar-venv"
 COOKIE_MODE=""  # auto | manual | ""
+
+# ─── 检测运行模式 ───────────────────────────────────────
+SCRIPT_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd || echo "")"
+if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/tokens.3m.py" ]; then
+    # 本地模式：从同目录读取
+    SOURCE_PLUGIN="$SCRIPT_DIR/tokens.3m.py"
+    echo "📁 本地模式: $SCRIPT_DIR"
+else
+    # 远程模式：从 GitHub 下载到固定位置
+    echo "🌐 远程模式：下载 TokenPUA..."
+    mkdir -p "$SOURCE_DIR"
+    if ! curl -fsSL "$GITHUB_RAW/tokens.3m.py" -o "$SOURCE_DIR/tokens.3m.py"; then
+        echo "❌ 下载失败，请检查网络连接后重试"
+        exit 1
+    fi
+    # 也下载 GUIDE.md 供 AI 参考
+    curl -fsSL "$GITHUB_RAW/GUIDE.md" -o "$SOURCE_DIR/GUIDE.md" 2>/dev/null || true
+    SOURCE_PLUGIN="$SOURCE_DIR/tokens.3m.py"
+    chmod +x "$SOURCE_PLUGIN"
+    echo "✅ 已下载到 $SOURCE_DIR"
+fi
+
+if [ ! -f "$SOURCE_PLUGIN" ]; then
+    echo "❌ 未找到插件源码: $SOURCE_PLUGIN"
+    exit 1
+fi
 
 # ─── 解析参数 ──────────────────────────────────────────
 for arg in "$@"; do
@@ -31,11 +57,6 @@ for arg in "$@"; do
             ;;
     esac
 done
-
-if [ ! -f "$SOURCE_PLUGIN" ]; then
-    echo "❌ 未找到插件源码: $SOURCE_PLUGIN"
-    exit 1
-fi
 
 echo ""
 echo "  ╔══════════════════════════════╗"
