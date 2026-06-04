@@ -673,10 +673,10 @@ def main() -> None:
 
 def handle_login() -> None:
     print("TokenPUA 登录中...")
-    if AuthManager.open_login_and_wait(timeout=60):
+    if AuthManager.open_login_and_wait(timeout=120):
         print("✅ 成功")
     else:
-        print("⚠️ 超时，请从菜单重试")
+        print("⚠️ 超时或未检测到登录态，请从菜单栏点击「点击登录」重试")
     try:
         subprocess.run(["open", "swiftbar://refreshplugin?name=tokens"],
                        capture_output=True, timeout=5)

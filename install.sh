@@ -15,6 +15,7 @@ SOURCE_PLUGIN="$SCRIPT_DIR/tokens.3m.py"
 DEFAULT_PLUGIN_DIR="$HOME/.swiftbar-plugins"
 SWIFTBAR_BUNDLE="com.ameba.SwiftBar"
 CONFIG_DIR="$HOME/.config/tokens-woa"
+VENV_DIR="$HOME/.swiftbar-venv"
 COOKIE_MODE=""  # auto | manual | ""
 
 # ─── 解析参数 ──────────────────────────────────────────
@@ -79,32 +80,84 @@ printf '%s\n' "$COOKIE_MODE" > "$CONFIG_DIR/mode"
 
 echo ""
 
-find_bin() {
-    local name="$1"
-    shift || true
-    for candidate in "$@"; do
-        if [ -x "$candidate" ]; then
-            printf '%s\n' "$candidate"
+# ─── Python 检测 ─────────────────────────────────────
+# 优先系统 Python，再 Homebrew，拒绝管理环境
+find_safe_python() {
+    # 1) 系统内置 Python（Apple 签名，最安全）
+    if [ -x /usr/bin/python3 ]; then
+        printf '%s\n' "/usr/bin/python3"
+        return 0
+    fi
+    # 2) Homebrew Python（常用位置）
+    for p in /opt/homebrew/bin/python3 /usr/local/bin/python3; do
+        if [ -x "$p" ]; then
+            printf '%s\n' "$p"
             return 0
         fi
     done
-    local bin_path
-    bin_path="$(command -v "$name" 2>/dev/null)"
-    if [ -n "$bin_path" ]; then
-        printf '%s\n' "$bin_path"
-        return 0
+    # 3) 更精确的 Homebrew 版本（brew 可能装的是 python@3.13/python@3.12）
+    for p in /opt/homebrew/opt/python@3.13/bin/python3.13 \
+             /opt/homebrew/opt/python@3.12/bin/python3.12 \
+             /usr/local/opt/python@3.13/bin/python3.13 \
+             /usr/local/opt/python@3.12/bin/python3.12; do
+        if [ -x "$p" ]; then
+            printf '%s\n' "$p"
+            return 0
+        fi
+    done
+    # 4) PATH 搜索，但过滤管理环境（签名冲突来源）
+    local bp
+    bp="$(command -v python3 2>/dev/null || true)"
+    if [ -n "$bp" ]; then
+        case "$bp" in
+            *".workbuddy"*|*".asdf"*|*"pyenv"*|*"conda"*|*"venv"*|*"virtualenv"*)
+                echo "⚠️  跳过管理环境 Python: $bp" >&2
+                ;;
+            *)
+                printf '%s\n' "$bp"
+                return 0
+                ;;
+        esac
     fi
     return 1
 }
 
-deploy_python_script() {
-    local source_file="$1"
-    local target_file="$2"
-    sed "1s|.*|#!${PYTHON_BIN}|" "$source_file" > "$target_file"
-    chmod +x "$target_file"
-}
+PYTHON_BIN="$(find_safe_python || true)"
+if [ -z "$PYTHON_BIN" ]; then
+    echo "📦 安装 Python 3..."
+    if brew install python 2>/dev/null || brew install python@3.13 2>/dev/null || brew install python@3.12 2>/dev/null; then
+        PYTHON_BIN="$(find_safe_python || true)"
+    else
+        echo "❌ Homebrew 安装 Python 失败（可能无写权限）"
+        echo ""
+        echo "   尝试手动安装:"
+        echo "   brew install python"
+        echo ""
+        echo "   或将已有 Python 硬链接到本脚本的 venv:"
+        echo "   /path/to/your/python3 -m venv ~/.swiftbar-venv"
+        echo "   然后重新执行 bash install.sh"
+        exit 1
+    fi
+fi
+echo "✅ Python 3 ($($PYTHON_BIN --version 2>&1) path=$PYTHON_BIN"
 
-# ─── 1. 检查 Homebrew ────────────────────────────
+# ─── 创建专用 venv ────────────────────────────────────
+# 用找到的 Python 创建独立虚拟环境，避免原生扩展签名冲突
+echo "📦 创建插件运行环境（venv）..."
+if [ ! -d "$VENV_DIR" ]; then
+    "$PYTHON_BIN" -m venv "$VENV_DIR"
+fi
+VENV_PYTHON="$VENV_DIR/bin/python3"
+
+# 确认 venv 可用
+if [ ! -x "$VENV_PYTHON" ]; then
+    echo "⚠️  venv 创建失败，退而使用原 Python: $PYTHON_BIN"
+    VENV_PYTHON="$PYTHON_BIN"
+else
+    echo "✅ venv: $VENV_DIR"
+fi
+
+# ─── 1. 检查 Homebrew ────────────────────────────────
 if ! command -v brew >/dev/null 2>&1; then
     echo "❌ 未找到 Homebrew"
     echo "   请先安装: /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""
@@ -112,20 +165,7 @@ if ! command -v brew >/dev/null 2>&1; then
 fi
 echo "✅ Homebrew"
 
-# ─── 2. 检查 Python 3 ────────────────────────────
-PYTHON_BIN="$(find_bin python3 /opt/homebrew/bin/python3 /usr/local/bin/python3 || true)"
-if [ -z "$PYTHON_BIN" ]; then
-    echo "📦 安装 Python 3..."
-    brew install python
-    PYTHON_BIN="$(find_bin python3 /opt/homebrew/bin/python3 /usr/local/bin/python3 || true)"
-fi
-if [ -z "$PYTHON_BIN" ]; then
-    echo "❌ Python 3 安装失败"
-    exit 1
-fi
-echo "✅ Python 3 ($($PYTHON_BIN --version 2>&1) path=$PYTHON_BIN"
-
-# ─── 3. 安装 SwiftBar ───────────────────────────────────
+# ─── 2. 安装 SwiftBar ───────────────────────────────────
 if [ ! -d "/Applications/SwiftBar.app" ]; then
     echo "📦 安装 SwiftBar..."
     brew install --cask swiftbar
@@ -134,26 +174,24 @@ else
     echo "✅ SwiftBar"
 fi
 
-# ─── 4. 检查 Python 依赖（仅自动模式需要）───────────────────────
+# ─── 3. 安装 Python 依赖（仅自动模式需要）────────────────
 if [ "$COOKIE_MODE" = "auto" ]; then
-    if ! "$PYTHON_BIN" -c "import cryptography" >/dev/null 2>&1; then
-        echo "📦 安装 Python 依赖 cryptography..."
-        if ! "$PYTHON_BIN" -m pip install cryptography --break-system-packages 2>&1; then
-            "$PYTHON_BIN" -m pip install cryptography --user 2>&1 || true
-        fi
+    if ! "$VENV_PYTHON" -c "import cryptography" >/dev/null 2>&1; then
+        echo "📦 安装 cryptography 到 venv..."
+        "$VENV_PYTHON" -m pip install cryptography 2>&1 || true
     fi
-    if "$PYTHON_BIN" -c "import cryptography" >/dev/null 2>&1; then
+    if "$VENV_PYTHON" -c "import cryptography" >/dev/null 2>&1; then
         echo "✅ cryptography"
     else
         echo "⚠️  cryptography 未安装成功，将切换为手动输入 Cookie 模式"
-        echo "   如需自动提取，请手动安装: $PYTHON_BIN -m pip install cryptography"
+        echo "   如需自动提取，请手动安装: $VENV_PYTHON -m pip install cryptography"
         COOKIE_MODE="manual"
     fi
 else
     echo "⏭️  跳过 cryptography 安装（手动模式）"
 fi
 
-# ─── 5. 识别 SwiftBar 插件目录 ─────────────────────────
+# ─── 4. 识别 SwiftBar 插件目录 ─────────────────────────
 PLUGIN_DIR="$(defaults read "$SWIFTBAR_BUNDLE" PluginDirectory 2>/dev/null || true)"
 if [ -z "$PLUGIN_DIR" ]; then
     PLUGIN_DIR="$DEFAULT_PLUGIN_DIR"
@@ -161,12 +199,18 @@ fi
 mkdir -p "$PLUGIN_DIR" "$CONFIG_DIR"
 echo "✅ SwiftBar 插件目录: $PLUGIN_DIR"
 
-# ─── 6. 部署插件（重写 shebang）────────────────────────
+# ─── 5. 部署插件（shebang → venv Python）────────────────
+deploy_python_script() {
+    local source_file="$1"
+    local target_file="$2"
+    sed "1s|.*|#!${VENV_PYTHON}|" "$source_file" > "$target_file"
+    chmod +x "$target_file"
+}
 deploy_python_script "$SOURCE_PLUGIN" "$PLUGIN_DIR/tokens.3m.py"
 defaults write "$SWIFTBAR_BUNDLE" PluginDirectory "$PLUGIN_DIR" 2>/dev/null || true
 echo "✅ 已部署 tokens.3m.py"
 
-# ─── 7. 如果插件被禁用，自动解除 ───────────────────────
+# ─── 6. 如果插件被禁用，自动解除 ────────────────────────
 PREF_PLIST="$HOME/Library/Preferences/${SWIFTBAR_BUNDLE}.plist"
 if [ -f "$PREF_PLIST" ] && /usr/libexec/PlistBuddy -c "Print :DisabledPlugins" "$PREF_PLIST" >/dev/null 2>&1; then
     idx=0
@@ -180,14 +224,18 @@ if [ -f "$PREF_PLIST" ] && /usr/libexec/PlistBuddy -c "Print :DisabledPlugins" "
     done
 fi
 
-# ─── 8. 启动 SwiftBar ──────────────────────────────────
+# ─── 7. 启动 SwiftBar ──────────────────────────────────
 echo ""
 echo "🚀 启动 SwiftBar..."
-pkill -x "SwiftBar" 2>/dev/null || true
-open -a "SwiftBar" || true
+if ! pkill -x "SwiftBar" 2>/dev/null; then
+    true  # 未运行是正常情况
+fi
+if ! open -a "SwiftBar" 2>/dev/null; then
+    echo "⚠️  自动启动失败，请在应用程序中手动打开 SwiftBar"
+fi
 sleep 2
 
-# ─── 9. 初始化 CC（根据模式分支）─────────────────────────────
+# ─── 8. 初始化 CC（根据模式分支）─────────────────────────
 echo ""
 if [ "$COOKIE_MODE" = "manual" ]; then
     echo "  请手动输入 CC Cookie："
@@ -205,16 +253,19 @@ if [ "$COOKIE_MODE" = "manual" ]; then
         echo "⚠️  未输入 Cookie，稍后可在菜单栏点击「点击登录」手动输入"
     fi
 else
-    echo "  正在初始化 CC 登录（自动从浏览器提取 Cookie）..."
+    echo "  正在初始化 CC 登录..."
+    echo "  将从 Edge/Chrome 自动提取 Cookie"
     echo ""
     echo "  ⚠️  即将弹出钥匙串授权框，询问是否允许访问「Safe Storage」"
     echo "     请点击「始终允许」（Always Allow），只点一次以后不会再弹"
     echo ""
-    "$PYTHON_BIN" "$PLUGIN_DIR/tokens.3m.py" --setup
+    "$VENV_PYTHON" "$PLUGIN_DIR/tokens.3m.py" --setup
 fi
 
-# ─── 10. 刷新 SwiftBar ──────────────────────────────────
-open "swiftbar://refreshplugin?name=tokens" 2>/dev/null || true
+# ─── 9. 刷新 SwiftBar ──────────────────────────────────
+if ! open "swiftbar://refreshplugin?name=tokens" 2>/dev/null; then
+    echo "💡 如菜单栏未刷新，请手动点击菜单栏「刷新」按钮"
+fi
 
 echo ""
 echo "  ╔══════════════════════════════╗"
