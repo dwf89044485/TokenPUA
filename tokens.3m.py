@@ -40,7 +40,6 @@ CONFIG_DIR   = Path.home() / ".config" / "tokens-woa"
 COOKIE_FILE = CONFIG_DIR / "cc_cookie"
 MODE_FILE   = CONFIG_DIR / "mode"    # "auto" or "manual"
 CACHE_FILE  = CONFIG_DIR / "cache.json"
-KEY_CACHE   = CONFIG_DIR / "safe_storage_key"
 
 # ─── Constants ─────────────────────────────
 PBKDF2_ITERATIONS = 1003
@@ -112,15 +111,6 @@ class BrowserCookie:
         import hashlib
         if service in cls._key_cache:
             return cls._key_cache[service]
-        # 文件缓存：避免每次刷新都调 security（钥匙串弹窗干扰）
-        if KEY_CACHE.exists():
-            try:
-                cached = KEY_CACHE.read_bytes()
-                if len(cached) == AES_IV_SIZE:
-                    cls._key_cache[service] = cached
-                    return cached
-            except OSError:
-                pass
         try:
             r = subprocess.run(
                 ["security", "find-generic-password", "-w", "-s", service],
@@ -131,13 +121,6 @@ class BrowserCookie:
             pwd = r.stdout.strip().encode("utf-8")
             key = hashlib.pbkdf2_hmac("sha1", pwd, b"saltysalt", PBKDF2_ITERATIONS, dklen=AES_IV_SIZE)
             cls._key_cache[service] = key
-            # 持久化到文件，后续不再弹窗
-            try:
-                CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-                KEY_CACHE.write_bytes(key)
-                KEY_CACHE.chmod(0o600)
-            except OSError:
-                pass
             return key
         except (subprocess.TimeoutExpired, subprocess.SubprocessError, KeyError) as e:
             logger.debug(f"Failed to get key for {service}: {e}")

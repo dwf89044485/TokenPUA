@@ -245,16 +245,13 @@ if [ -f "$PREF_PLIST" ] && /usr/libexec/PlistBuddy -c "Print :DisabledPlugins" "
     done
 fi
 
-# ─── 7. 启动 SwiftBar ──────────────────────────────────
+# ─── 7. 关闭 SwiftBar（避免安装时并发触发钥匙串）────────────
 echo ""
-echo "🚀 启动 SwiftBar..."
+echo "🔒 临时关闭 SwiftBar，安装完再启动..."
 if ! pkill -x "SwiftBar" 2>/dev/null; then
-    true  # 未运行是正常情况
+    true
 fi
-if ! open -a "SwiftBar" 2>/dev/null; then
-    echo "⚠️  自动启动失败，请在应用程序中手动打开 SwiftBar"
-fi
-sleep 2
+sleep 1
 
 # ─── 8. 初始化 CC（根据模式分支）─────────────────────────
 echo ""
@@ -283,7 +280,14 @@ else
     "$VENV_PYTHON" "$PLUGIN_DIR/tokens.3m.py" --setup
 fi
 
-# ─── 9. 刷新 SwiftBar ──────────────────────────────────
+# ─── 9. 启动 SwiftBar + 刷新 ──────────────────────────
+echo ""
+echo "🚀 启动 SwiftBar..."
+if ! open -a "SwiftBar" 2>/dev/null; then
+    echo "⚠️  自动启动失败，请在应用程序中手动打开 SwiftBar"
+fi
+sleep 2
+
 if ! open "swiftbar://refreshplugin?name=tokens" 2>/dev/null; then
     echo "💡 如菜单栏未刷新，请手动点击菜单栏「刷新」按钮"
 fi
