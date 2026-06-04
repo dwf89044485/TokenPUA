@@ -84,13 +84,28 @@ def set_cookie(cookie: str) -> None:
 
 # ─── BrowserCookie ────────────────────────────
 class BrowserCookie:
-    BROWSERS = [
-        ("Microsoft Edge Safe Storage",
-         Path.home() / "Library/Application Support/Microsoft Edge"),
-        ("Chrome Safe Storage",
-         Path.home() / "Library/Application Support/Google/Chrome"),
-    ]
     _key_cache = {}
+
+    BROWSER_CANDIDATES = [
+        # (Keychain 服务名, 数据目录, 显示名)
+        ("Chrome Safe Storage",
+         Path.home() / "Library/Application Support/Google/Chrome",
+         "Chrome"),
+        ("Microsoft Edge Safe Storage",
+         Path.home() / "Library/Application Support/Microsoft Edge",
+         "Edge"),
+        ("Brave Safe Storage",
+         Path.home() / "Library/Application Support/BraveSoftware/Brave-Browser",
+         "Brave"),
+        ("Arc Safe Storage",
+         Path.home() / "Library/Application Support/Arc",
+         "Arc"),
+    ]
+
+    @classmethod
+    def _browsers(cls):
+        """返回本机已安装的浏览器列表"""
+        return [(s, p) for s, p, _ in cls.BROWSER_CANDIDATES if p.exists()]
 
     HOST_PATTERNS = (
         "%token.woa.com%",
@@ -207,9 +222,7 @@ class BrowserCookie:
 
     @classmethod
     def extract(cls, validate: bool = True) -> Optional[str]:
-        for service, browser_base in cls.BROWSERS:
-            if not browser_base.exists():
-                continue
+        for service, browser_base in cls._browsers():
             key = cls._get_key(service)
             if not key:
                 continue
