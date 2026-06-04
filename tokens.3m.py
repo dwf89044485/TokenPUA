@@ -519,7 +519,7 @@ def render(pacing: dict, today_used: float) -> None:
 def render_records_table(records: list[dict]) -> None:
     """渲染近期消费记录表格"""
     print("---")
-    print("近期消费记录 | size=11 color=#888888")
+    print("近期消费记录")
     for rec in records:
         # 格式：时间  金额  模型  token  用户消息(最后一列，可较长)
         time_str = rec["time"][5:16] if len(rec["time"]) >= 16 else rec["time"]  # MM-DD HH:MM
@@ -553,7 +553,7 @@ def render_records_table(records: list[dict]) -> None:
         model_fixed = model[:10] if len(model) > 10 else model
         line = f"{time_str:<10}  {cost_str:>6}    {model_fixed:<10} {token_str:>10}    {ui_trunc}"
         color_param = " color=#999999" if cost == 0 else ""
-        print(f"{line} | size=10 {NOOP}{color_param}")
+        print(f"{line} | size=11 font=Menlo {NOOP}{color_param}")
 
 def render_with_records(pacing: dict, today_used: float, records: list[dict]) -> None:
     render(pacing, today_used)
