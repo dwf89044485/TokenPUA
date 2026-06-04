@@ -207,8 +207,10 @@ class BrowserCookie:
 
     @classmethod
     def extract(cls, validate: bool = True) -> Optional[str]:
-        for _service, browser_base in cls.BROWSERS:
-            key = cls._get_key(_service)
+        for service, browser_base in cls.BROWSERS:
+            if not browser_base.exists():
+                continue
+            key = cls._get_key(service)
             if not key:
                 continue
             for db_path in cls._iter_dbs(browser_base):
