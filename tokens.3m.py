@@ -723,11 +723,12 @@ def main() -> None:
     total_used  = float((data or {}).get("total_used", 0) or 0)
     total_quota = float((data or {}).get("total_quota", 0) or 1000)
 
-    # today cost: accumulate cost field from usage-details (遍历所有分页)
+    # today cost: accumulate cost field from usage-details（遍历全部分页）
     today_str = date.today().isoformat()
     today_used = 0.0
-    for page in range(1, MAX_API_PAGES + 1):
-        _, details, _ = ApiClient.fetch_usage_details(cookie, today_str, today_str, page)
+    today_page = 1
+    while True:
+        _, details, _ = ApiClient.fetch_usage_details(cookie, today_str, today_str, today_page)
         if not details or not isinstance(details.get("data"), list):
             break
         for rec in details["data"]:
@@ -741,8 +742,11 @@ def main() -> None:
                 today_used += float(c_str)
             except (ValueError, TypeError):
                 continue
-        # API 返回总条数小于 page_size，说明是最后一页
+        # 该页条数小于 page_size 说明已是最后一页
         if len(details["data"]) < API_PAGE_SIZE:
+            break
+        today_page += 1
+        if today_page > 100:  # 安全上限：5000 条/天
             break
 
     # remaining workdays
