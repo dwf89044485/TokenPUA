@@ -723,31 +723,60 @@ def main() -> None:
     total_used  = float((data or {}).get("total_used", 0) or 0)
     total_quota = float((data or {}).get("total_quota", 0) or 1000)
 
-    # today cost: accumulate cost field from usage-details（遍历全部分页）
+    # today cost: 缓存增量计算（避免每次遍历全部分页）
     today_str = date.today().isoformat()
-    today_used = 0.0
-    today_page = 1
-    while True:
-        _, details, _ = ApiClient.fetch_usage_details(cookie, today_str, today_str, today_page)
-        if not details or not isinstance(details.get("data"), list):
-            break
-        for rec in details["data"]:
-            c_raw = rec.get("cost")
-            if c_raw is None:
-                continue
-            try:
-                c_str = str(c_raw).replace("¥", "").replace(",", "").strip()
-                if c_str == "-" or not c_str:
+    cache = load_cache()
+    cache_date = (cache or {}).get("today_date", "")
+    cache_today_used = (cache or {}).get("today_used")
+
+    if cache_date == today_str and cache_today_used is not None:
+        # 同一天：仅拉 page 1 算增量
+        cached_last_time = (cache or {}).get("today_last_time", "")
+        _, details, _ = ApiClient.fetch_usage_details(cookie, today_str, today_str, page=1)
+        new_costs = 0.0
+        page1_max_time = cached_last_time
+        if details and isinstance(details.get("data"), list):
+            for rec in details["data"]:
+                rec_time = rec.get("request_time", "") or ""
+                if rec_time > cached_last_time:
+                    c_raw = rec.get("cost")
+                    if c_raw is not None:
+                        try:
+                            c_str = str(c_raw).replace("¥", "").replace(",", "").strip()
+                            if c_str != "-" and c_str:
+                                new_costs += float(c_str)
+                        except (ValueError, TypeError):
+                            pass
+                if rec_time > page1_max_time:
+                    page1_max_time = rec_time
+        today_used = cache_today_used + new_costs
+        today_last_time = page1_max_time
+    else:
+        # 跨天/无缓存 → 全量遍历
+        today_used = 0.0
+        today_last_time = ""
+        today_page = 1
+        while True:
+            _, details, _ = ApiClient.fetch_usage_details(cookie, today_str, today_str, today_page)
+            if not details or not isinstance(details.get("data"), list):
+                break
+            for rec in details["data"]:
+                rec_time = rec.get("request_time", "") or ""
+                if rec_time > today_last_time:
+                    today_last_time = rec_time
+                c_raw = rec.get("cost")
+                if c_raw is None:
                     continue
-                today_used += float(c_str)
-            except (ValueError, TypeError):
-                continue
-        # 该页条数小于 page_size 说明已是最后一页
-        if len(details["data"]) < API_PAGE_SIZE:
-            break
-        today_page += 1
-        if today_page > 100:  # 安全上限：5000 条/天
-            break
+                try:
+                    c_str = str(c_raw).replace("¥", "").replace(",", "").strip()
+                    if c_str == "-" or not c_str:
+                        continue
+                    today_used += float(c_str)
+                except (ValueError, TypeError):
+                    continue
+            if len(details["data"]) < API_PAGE_SIZE:
+                break
+            today_page += 1
 
     # remaining workdays
     today = date.today()
@@ -760,7 +789,13 @@ def main() -> None:
 
     pacing = calc_pacing(total_used, total_quota, remaining_wd)
     render_with_records(pacing, today_used, records)
-    save_cache({"time": datetime.now().strftime("%m-%d %H:%M"), "spent": total_used})
+    save_cache({
+        "time": datetime.now().strftime("%m-%d %H:%M"),
+        "spent": total_used,
+        "today_date": today_str,
+        "today_used": today_used,
+        "today_last_time": today_last_time,
+    })
 
 def handle_login() -> None:
     print("TokenPUA 登录中...")
