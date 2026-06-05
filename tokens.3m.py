@@ -825,11 +825,11 @@ def main() -> None:
         new_records = []
 
         if data and isinstance(data.get("data"), list):
-            page1_max_time = cache_today_last_time
+            page1_max_time = today_last_time
             for rec in data["data"]:
                 rec_time = rec.get("request_time", "") or ""
                 # 更新今日消耗
-                if rec_time.startswith(today_str) and rec_time > cache_today_last_time:
+                if rec_time.startswith(today_str) and rec_time > today_last_time:
                     new_costs += _parse_cost(rec.get("cost"))
                 # 更新记录列表
                 if rec_time > cache_records_last_time:
@@ -846,8 +846,8 @@ def main() -> None:
                 for r in new_records:
                     if r["time"] > records_last_time:
                         records_last_time = r["time"]
-            today_used = cache_today_used + new_costs
-            today_last_time = page1_max_time if page1_max_time > cache_today_last_time else cache_today_last_time
+            today_used = today_used + new_costs
+            today_last_time = page1_max_time if page1_max_time > today_last_time else today_last_time
 
     # ── remaining workdays ──
     today = date.today()
