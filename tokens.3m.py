@@ -811,6 +811,13 @@ def main() -> None:
         # ── 增量更新：只拉 page 1，比对时间戳 ──
         today_used = cache_today_used
         today_last_time = cache_today_last_time
+
+        # 跨天重置：新的一天，今日已用归零
+        cache_today_date = cache.get("today_date", "")
+        if today_str != cache_today_date:
+            today_used = 0.0
+            today_last_time = ""
+
         records = list(cache_records)
         records_last_time = cache_records_last_time
         _, data, _ = ApiClient.fetch_usage_details(cookie, month_start, today_str, page=1)
