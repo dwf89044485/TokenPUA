@@ -600,13 +600,13 @@ def render_records_table(records: list[dict]) -> None:
         model = model[:18] if len(model) > 18 else model
         cost = rec["cost"]
         tokens = rec["total_tokens"]
-        user_input = (rec["user_input"] or "").replace("\n", " ").replace("\r", "").replace("|", "｜")
-        # 用户消息截到60显示宽度（中文=2宽，英文=1宽）
+        user_input = (rec["user_input"] or "").replace("\n", " ").replace("\r", "").replace("\t", " ").replace("|", "｜").strip()
+        # 用户消息截到40显示宽度（中文=2宽，英文=1宽，避免 SwiftBar 菜单过宽折行）
         ui_trunc = ""
         w = 0
         for c in user_input:
             cw = 2 if ord(c) > 127 else 1
-            if w + cw > 60:
+            if w + cw > 40:
                 break
             ui_trunc += c
             w += cw
