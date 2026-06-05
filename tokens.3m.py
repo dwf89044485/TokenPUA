@@ -361,8 +361,8 @@ class ApiClient:
                 break
             for rec in data.get("data", []):
                 try:
-                    cost_str = str(rec.get("cost", "¥0")).replace("¥", "").replace(",", "")
-                    cost = float(cost_str)
+                    cost_str = str(rec.get("cost", "¥0")).replace("¥", "").replace(",", "").strip()
+                    cost = 0.0 if (not cost_str or cost_str == "-") else float(cost_str)
                     if cost >= min_cost:
                         # 解析 total_tokens
                         total_str = str(rec.get("total_tokens", "0")).replace(",", "")
