@@ -49,6 +49,9 @@ API_PAGE_SIZE = 50
 REMAINING_WD_WARNING = 5
 HIGH_SPEND_THRESHOLD = 100.0
 DEFAULT_LOOKUP_DAYS = 7
+RECORDS_CACHE_LIMIT = 200     # 缓存保留的最大记录数
+RECORDS_DISPLAY_LIMIT = 45    # 下拉菜单展示的记录数
+FULL_SCAN_MAX_PAGES = 10      # 全量扫描时的最大页数
 DEFAULT_MIN_COST = 0.001
 DEFAULT_RECORD_LIMIT = 50
 NOOP = "bash=/usr/bin/true terminal=false"
@@ -695,6 +698,65 @@ def load_cache() -> Optional[dict]:
         logger.debug(f"Failed to load cache: {e}")
     return None
 
+# ─── Data Helpers ─────────────────────────
+def _parse_cost(raw) -> float:
+    """解析 API cost 字段为 float，非数字串返回 0.0"""
+    if raw is None:
+        return 0.0
+    try:
+        s = str(raw).replace("¥", "").replace(",", "").strip()
+        return float(s) if s and s != "-" else 0.0
+    except (ValueError, TypeError):
+        return 0.0
+
+def _to_display_record(rec: dict) -> dict:
+    """将 API 返回的一条记录转为展示用 dict"""
+    rec_time = rec.get("request_time", "") or ""
+    cost = _parse_cost(rec.get("cost"))
+    total_str = str(rec.get("total_tokens", "0")).replace(",", "")
+    return {
+        "time": rec_time[:16],
+        "model": rec.get("model_name", "-"),
+        "cost": cost,
+        "total_tokens": int(total_str) if total_str.isdigit() else 0,
+        "user_input": rec.get("user_input", "")[:100],
+    }
+
+def _full_scan_month(cookie: str, month_start: str, today_str: str):
+    """
+    全量扫描当月 usage-details，最多 FULL_SCAN_MAX_PAGES 页。
+    返回 (today_used, today_last_time, records, records_last_time)
+    """
+    today_used = 0.0
+    today_last_time = ""
+    records = []
+    records_last_time = ""
+
+    for page in range(1, FULL_SCAN_MAX_PAGES + 1):
+        ok, data, _ = ApiClient.fetch_usage_details(cookie, month_start, today_str, page)
+        if not ok or not data:
+            break
+        page_list = data.get("data", [])
+        if not page_list:
+            break
+        for rec in page_list:
+            rec_time = rec.get("request_time", "") or ""
+            if rec_time > records_last_time:
+                records_last_time = rec_time
+            # 累计今日消耗
+            if rec_time.startswith(today_str):
+                today_used += _parse_cost(rec.get("cost"))
+                if rec_time > today_last_time:
+                    today_last_time = rec_time
+            records.append(_to_display_record(rec))
+        if len(page_list) < API_PAGE_SIZE:
+            break
+
+    # 按时间倒序（最新在前），截断
+    records.sort(key=lambda r: r["time"], reverse=True)
+    records = records[:RECORDS_CACHE_LIMIT]
+    return today_used, today_last_time, records, records_last_time
+
 # ─── Main ─────────────────────────────────────
 def main() -> None:
     cookie = AuthManager.ensure()
@@ -723,78 +785,82 @@ def main() -> None:
     total_used  = float((data or {}).get("total_used", 0) or 0)
     total_quota = float((data or {}).get("total_quota", 0) or 1000)
 
-    # today cost: 缓存增量计算（避免每次遍历全部分页）
+    # ── 数据获取：当月消耗记录 ──────────────────
     today_str = date.today().isoformat()
-    cache = load_cache()
-    cache_date = (cache or {}).get("today_date", "")
-    cache_today_used = (cache or {}).get("today_used")
+    month_start = date.today().replace(day=1).isoformat()
+    current_month = date.today().strftime("%Y-%m")
 
-    if cache_date == today_str and cache_today_used is not None:
-        # 同一天：仅拉 page 1 算增量
-        cached_last_time = (cache or {}).get("today_last_time", "")
-        _, details, _ = ApiClient.fetch_usage_details(cookie, today_str, today_str, page=1)
+    cache = load_cache() or {}
+    cache_month = cache.get("month", "")
+    cache_today_used = cache.get("today_used")
+    cache_today_last_time = cache.get("today_last_time", "")
+    cache_records = cache.get("records", [])
+    cache_records_last_time = cache.get("records_last_time", "")
+
+    need_full_scan = (
+        cache_month != current_month
+        or cache_today_used is None
+    )
+
+    if need_full_scan:
+        # ── 全量扫描（跨月 / 无缓存） ──
+        today_used, today_last_time, records, records_last_time = _full_scan_month(
+            cookie, month_start, today_str
+        )
+    else:
+        # ── 增量更新：只拉 page 1，比对时间戳 ──
+        today_used = cache_today_used
+        today_last_time = cache_today_last_time
+        records = list(cache_records)
+        records_last_time = cache_records_last_time
+        _, data, _ = ApiClient.fetch_usage_details(cookie, month_start, today_str, page=1)
         new_costs = 0.0
-        page1_max_time = cached_last_time
-        if details and isinstance(details.get("data"), list):
-            for rec in details["data"]:
+        new_records = []
+
+        if data and isinstance(data.get("data"), list):
+            page1_max_time = cache_today_last_time
+            for rec in data["data"]:
                 rec_time = rec.get("request_time", "") or ""
-                if rec_time > cached_last_time:
-                    c_raw = rec.get("cost")
-                    if c_raw is not None:
-                        try:
-                            c_str = str(c_raw).replace("¥", "").replace(",", "").strip()
-                            if c_str != "-" and c_str:
-                                new_costs += float(c_str)
-                        except (ValueError, TypeError):
-                            pass
+                # 更新今日消耗
+                if rec_time.startswith(today_str) and rec_time > cache_today_last_time:
+                    new_costs += _parse_cost(rec.get("cost"))
+                # 更新记录列表
+                if rec_time > cache_records_last_time:
+                    new_records.append(_to_display_record(rec))
                 if rec_time > page1_max_time:
                     page1_max_time = rec_time
-        today_used = cache_today_used + new_costs
-        today_last_time = page1_max_time
-    else:
-        # 跨天/无缓存 → 全量遍历
-        today_used = 0.0
-        today_last_time = ""
-        today_page = 1
-        while True:
-            _, details, _ = ApiClient.fetch_usage_details(cookie, today_str, today_str, today_page)
-            if not details or not isinstance(details.get("data"), list):
-                break
-            for rec in details["data"]:
-                rec_time = rec.get("request_time", "") or ""
-                if rec_time > today_last_time:
-                    today_last_time = rec_time
-                c_raw = rec.get("cost")
-                if c_raw is None:
-                    continue
-                try:
-                    c_str = str(c_raw).replace("¥", "").replace(",", "").strip()
-                    if c_str == "-" or not c_str:
-                        continue
-                    today_used += float(c_str)
-                except (ValueError, TypeError):
-                    continue
-            if len(details["data"]) < API_PAGE_SIZE:
-                break
-            today_page += 1
+            # 去重后追加新记录
+            if new_records:
+                existing_times = {r["time"] for r in records}
+                new_records = [r for r in new_records if r["time"] not in existing_times]
+                records = new_records + records
+                records = records[:RECORDS_CACHE_LIMIT]
+                records_last_time = cache_records_last_time
+                for r in new_records:
+                    if r["time"] > records_last_time:
+                        records_last_time = r["time"]
+            today_used = cache_today_used + new_costs
+            today_last_time = page1_max_time if page1_max_time > cache_today_last_time else cache_today_last_time
 
-    # remaining workdays
+    # ── remaining workdays ──
     today = date.today()
     _, total_days = monthrange(today.year, today.month)
     month_end = today.replace(day=total_days)
     remaining_wd = count_workdays(today, month_end)
 
-    # 近期高消费记录
-    records = ApiClient.fetch_recent_high_cost(cookie, days=DEFAULT_LOOKUP_DAYS, min_cost=0, limit=45)
-
+    # ── render ──
+    records_display = records[:RECORDS_DISPLAY_LIMIT]
     pacing = calc_pacing(total_used, total_quota, remaining_wd)
-    render_with_records(pacing, today_used, records)
+    render_with_records(pacing, today_used, records_display)
     save_cache({
         "time": datetime.now().strftime("%m-%d %H:%M"),
         "spent": total_used,
         "today_date": today_str,
         "today_used": today_used,
         "today_last_time": today_last_time,
+        "month": current_month,
+        "records": records,
+        "records_last_time": records_last_time,
     })
 
 def handle_login() -> None:
