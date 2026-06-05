@@ -88,26 +88,20 @@ class BrowserCookie:
 
     BROWSER_CANDIDATES = [
         # (Keychain 服务名, 数据目录, 显示名)
+        # 注：新增浏览器前需确认 Keychain 服务名与实际一致，
+        # 否则 security 找不到条目时 macOS 会反复弹窗。
         ("Chrome Safe Storage",
          Path.home() / "Library/Application Support/Google/Chrome",
          "Chrome"),
         ("Microsoft Edge Safe Storage",
          Path.home() / "Library/Application Support/Microsoft Edge",
          "Edge"),
-        ("Brave Safe Storage",
-         Path.home() / "Library/Application Support/BraveSoftware/Brave-Browser",
-         "Brave"),
-        ("Arc Safe Storage",
-         Path.home() / "Library/Application Support/Arc",
-         "Arc"),
     ]
 
-    # Bundle ID → Keychain 服务名映射
+    # Bundle ID → Keychain 服务名映射（仅已确认可用的）
     BUNDLE_MAP = {
-        "com.google.Chrome":          "Chrome Safe Storage",
-        "com.microsoft.edgemac":      "Microsoft Edge Safe Storage",
-        "com.brave.Browser":          "Brave Safe Storage",
-        "company.thebrowser.Browser": "Arc Safe Storage",
+        "com.google.Chrome":     "Chrome Safe Storage",
+        "com.microsoft.edgemac": "Microsoft Edge Safe Storage",
     }
 
     @classmethod
