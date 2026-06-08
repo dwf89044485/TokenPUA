@@ -123,25 +123,27 @@ class BrowserCookie:
             if r.returncode != 0:
                 return None
             # 从 plist 输出中找 https 对应的 handler
-            in_https = False
-            for line in r.stdout.splitlines():
+            # plist 格式：LSHandlerURLScheme = https;（无引号）
+            lines = r.stdout.splitlines()
+            for i, line in enumerate(lines):
                 line = line.strip()
-                if 'LSHandlerURLScheme = "https"' in line:
-                    in_https = True
-                elif in_https and 'LSHandlerRoleAll' in line:
-                    parts = line.split("=", 1)
-                    if len(parts) == 2:
-                        bundle_id = parts[1].strip().strip('";')
-                        service = cls.BUNDLE_MAP.get(bundle_id)
-                        if not service:
-                            return None
-                        # 找对应的数据目录
-                        for s, p, _ in cls.BROWSER_CANDIDATES:
-                            if s == service and p.exists():
-                                return (s, p)
+                if 'LSHandlerURLScheme =' in line and 'https' in line.replace('"', '').split('=')[-1].strip().split(';')[0].strip():
+                    # 从当前位置往后找 LSHandlerRoleAll
+                    for j in range(i, min(i + 10, len(lines))):
+                        l2 = lines[j].strip()
+                        if 'LSHandlerRoleAll' in l2:
+                            parts = l2.split("=", 1)
+                            if len(parts) == 2:
+                                bundle_id = parts[1].strip().strip('";')
+                                service = cls.BUNDLE_MAP.get(bundle_id)
+                                if not service:
+                                    return None
+                                # 找对应的数据目录
+                                for s, p, _ in cls.BROWSER_CANDIDATES:
+                                    if s == service and p.exists():
+                                        return (s, p)
+                            break
                     break
-                elif in_https and line.startswith(")"):
-                    break  # https 块结束但没找到 handler，忽略
         except (subprocess.TimeoutExpired, subprocess.SubprocessError, OSError):
             pass
         return None
@@ -149,14 +151,11 @@ class BrowserCookie:
     HOST_PATTERNS = (
         "%token.woa.com%",
         "%tokens.woa.com%",
-        "%with.woa.com%",
-        "%.woa.com%",
     )
     ORDER_CASE = (
         "CASE "
         "WHEN host_key LIKE '%token.woa.com%' THEN 0 "
         "WHEN host_key LIKE '%tokens.woa.com%' THEN 1 "
-        "WHEN host_key LIKE '%with.woa.com%' THEN 2 "
         "ELSE 9 END"
     )
 
