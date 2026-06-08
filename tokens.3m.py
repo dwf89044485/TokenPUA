@@ -149,13 +149,15 @@ class BrowserCookie:
         return None
 
     HOST_PATTERNS = (
-        "%token.woa.com%",
+        "token.woa.com",
+        ".woa.com",
         "%tokens.woa.com%",
     )
     ORDER_CASE = (
         "CASE "
-        "WHEN host_key LIKE '%token.woa.com%' THEN 0 "
+        "WHEN host_key = 'token.woa.com' THEN 0 "
         "WHEN host_key LIKE '%tokens.woa.com%' THEN 1 "
+        "WHEN host_key = '.woa.com' THEN 2 "
         "ELSE 9 END"
     )
 
@@ -227,9 +229,12 @@ class BrowserCookie:
             shutil.copy2(db_path, tmp)
             conn = sqlite3.connect(tmp)
             where = " OR ".join("host_key LIKE ?" for _ in cls.HOST_PATTERNS)
+            # 过滤已过期的持久 Cookie（expires_utc 是 Windows 纪元微秒数）
             rows = conn.execute(
                 f"SELECT name, value, encrypted_value FROM cookies "
-                f"WHERE {where} ORDER BY {cls.ORDER_CASE}, last_access_utc DESC",
+                f"WHERE ({where}) AND (has_expires = 0 OR expires_utc = 0 OR "
+                f"expires_utc > CAST((julianday('now') - julianday('1601-01-01')) * 86400000000 AS INTEGER)) "
+                f"ORDER BY {cls.ORDER_CASE}, last_access_utc DESC",
                 cls.HOST_PATTERNS,
             ).fetchall()
             conn.close()
