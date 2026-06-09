@@ -334,31 +334,32 @@
       '</div>' +
     '</div>';
 
-    // ── Body: left (progress) + right (cards) ──
+    // ── Body: 3 blocks in a horizontal row ──
     h += '<div class="tpua-body">';
 
-    // Left column: progress bars
-    h += '<div class="tpua-left">';
-    h += '<div class="tpua-section-title">月进度</div>';
+    // Block 1: 4 cards in a horizontal row
+    h += '<div class="tpua-block">';
+    h += '<div class="tpua-cards-row">';
+    h += '<div class="tpua-card"><div class="tpua-card-val">' + p.remainingWd + '</div><div class="tpua-card-label">剩余工作日</div></div>';
+    h += '<div class="tpua-card"><div class="tpua-card-val">¥' + todayUsed.toFixed(1) + '</div><div class="tpua-card-label">今日已用</div></div>';
+    h += '<div class="tpua-card"><div class="tpua-card-val">¥' + p.dailyQuota.toFixed(0) + '</div><div class="tpua-card-label">日额度</div></div>';
+    h += '<div class="tpua-card"><div class="tpua-card-val">¥' + remaining.toFixed(0) + '</div><div class="tpua-card-label">剩余总额</div></div>';
+    h += '</div>'; // cards-row
+    h += '</div>'; // block 1
 
-    h += '<div class="tpua-bar-row"><span class="tpua-bar-label">额度</span>' + renderBar(p.pct) + '<span class="tpua-bar-num">' + p.pct.toFixed(0) + '%  ¥' + p.spent.toFixed(0) + '/¥' + p.budget.toFixed(0) + '</span></div>';
-    h += '<div class="tpua-bar-row"><span class="tpua-bar-label">时间</span>' + renderBar(p.monthElapsedPct, '#8888cc') + '<span class="tpua-bar-num">' + p.monthElapsedPct.toFixed(0) + '%  ' + now.getDate() + '/' + p.totalDays + '天</span></div>';
-
+    // Block 2: day progress
+    h += '<div class="tpua-block tpua-block-progress">';
     h += '<div class="tpua-section-title">日进度</div>';
     h += '<div class="tpua-bar-row"><span class="tpua-bar-label">额度</span>' + renderBar(Math.min(dayQuotaPct, 100)) + '<span class="tpua-bar-num">' + Math.min(dayQuotaPct, 100).toFixed(0) + '%  ¥' + todayUsed.toFixed(1) + '/¥' + p.dailyQuota.toFixed(0) + '</span></div>';
     h += '<div class="tpua-bar-row"><span class="tpua-bar-label">时间</span>' + renderBar(dayPct, '#8888cc') + '<span class="tpua-bar-num">' + dayPct.toFixed(0) + '%  ' + String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0') + '/24:00</span></div>';
+    h += '</div>'; // block 2
 
-    h += '</div>'; // left
-
-    // Right column: 4 cards
-    h += '<div class="tpua-right">';
-    h += '<div class="tpua-cards">';
-    h += '<div class="tpua-card"><div class="tpua-card-val">¥' + p.dailyQuota.toFixed(0) + '</div><div class="tpua-card-label">目标日均</div></div>';
-    h += '<div class="tpua-card"><div class="tpua-card-val">' + p.remainingWd + '</div><div class="tpua-card-label">剩余工作日</div></div>';
-    h += '<div class="tpua-card"><div class="tpua-card-val">¥' + remaining.toFixed(0) + '</div><div class="tpua-card-label">剩余总额</div></div>';
-    h += '<div class="tpua-card"><div class="tpua-card-val">¥' + todayUsed.toFixed(1) + '</div><div class="tpua-card-label">今日已用</div></div>';
-    h += '</div>'; // cards
-    h += '</div>'; // right
+    // Block 3: month progress
+    h += '<div class="tpua-block tpua-block-progress">';
+    h += '<div class="tpua-section-title">月进度</div>';
+    h += '<div class="tpua-bar-row"><span class="tpua-bar-label">额度</span>' + renderBar(p.pct) + '<span class="tpua-bar-num">' + p.pct.toFixed(0) + '%  ¥' + p.spent.toFixed(0) + '/¥' + p.budget.toFixed(0) + '</span></div>';
+    h += '<div class="tpua-bar-row"><span class="tpua-bar-label">时间</span>' + renderBar(p.monthElapsedPct, '#8888cc') + '<span class="tpua-bar-num">' + p.monthElapsedPct.toFixed(0) + '%  ' + now.getDate() + '/' + p.totalDays + '天</span></div>';
+    h += '</div>'; // block 3
 
     h += '</div>'; // body
 
@@ -465,7 +466,7 @@
 
   function injectStyles() {
     const css = [
-      '#tpua-panel{position:fixed;top:90px;left:10px;right:10px;z-index:2147483647;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;font-size:12px;color:#e0e0e0;background:rgba(26,26,46,0.95);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,0.08);border-radius:10px;box-shadow:0 8px 32px rgba(0,0,0,0.4);user-select:none;max-width:720px;margin:0 auto}',
+      '#tpua-panel{position:fixed;top:90px;left:10px;right:10px;z-index:2147483647;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;font-size:12px;color:#e0e0e0;background:rgba(26,26,46,0.95);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,0.08);border-radius:10px;box-shadow:0 8px 32px rgba(0,0,0,0.4);user-select:none;max-width:900px;margin:0 auto}',
       '#tpua-panel .tpua-header{display:flex;align-items:center;justify-content:space-between;padding:8px 14px;border-bottom:1px solid rgba(255,255,255,0.06)}',
       '#tpua-panel .tpua-status{font-weight:600;font-size:13px}',
       '#tpua-panel .tpua-header-actions{display:flex;align-items:center;gap:10px}',
@@ -473,20 +474,21 @@
       '#tpua-panel .tpua-refresh-inline:hover{color:#fff}',
       '#tpua-panel .tpua-header-btn{cursor:pointer;opacity:0.5;font-size:16px;padding:0 4px;border-radius:4px}',
       '#tpua-panel .tpua-header-btn:hover{opacity:1;background:rgba(255,255,255,0.1)}',
-      '#tpua-panel .tpua-body{display:flex;flex-direction:row;gap:0}',
-      '#tpua-panel .tpua-left{flex:1;min-width:0;padding:0 8px 6px 14px}',
-      '#tpua-panel .tpua-right{width:210px;flex-shrink:0;padding:0 14px 6px 8px;border-left:1px solid rgba(255,255,255,0.06)}',
-      '#tpua-panel .tpua-section-title{padding:6px 0 2px;font-size:10px;color:#888;text-transform:uppercase;letter-spacing:0.5px}',
+      '#tpua-panel .tpua-body{display:flex;flex-direction:row;gap:0;align-items:stretch}',
+      '#tpua-panel .tpua-block{padding:10px 0;display:flex;flex-direction:column;justify-content:center;align-items:center;flex:1;min-width:0}',
+      '#tpua-panel .tpua-block-progress{padding:8px 12px}',
+      '#tpua-panel .tpua-block+.tpua-block{border-left:1px solid rgba(255,255,255,0.06)}',
+      '#tpua-panel .tpua-cards-row{display:flex;flex-direction:row;gap:4px;justify-content:center;width:100%}',
+      '#tpua-panel .tpua-card{background:rgba(255,255,255,0.04);border-radius:6px;padding:8px 10px;text-align:center;flex:1;min-width:0}',
+      '#tpua-panel .tpua-card-val{font-size:14px;font-weight:700}',
+      '#tpua-panel .tpua-card-label{font-size:9px;color:#888;margin-top:1px}',
+      '#tpua-panel .tpua-section-title{padding:0 0 6px;font-size:10px;color:#888;text-transform:uppercase;letter-spacing:0.5px}',
       '#tpua-panel .tpua-bar-row{display:flex;align-items:center;padding:2px 0;gap:8px}',
       '#tpua-panel .tpua-bar-label{width:28px;font-size:10px;color:#888;text-align:right;flex-shrink:0}',
       '#tpua-panel .tpua-bar-track{flex:1;height:12px;background:rgba(255,255,255,0.06);border-radius:6px;overflow:hidden}',
       '#tpua-panel .tpua-bar-fill{height:100%;border-radius:6px;transition:width 0.4s ease}',
       '#tpua-panel .tpua-bar-num{font-size:10px;color:#aaa;white-space:nowrap;min-width:80px;text-align:left}',
-      '#tpua-panel .tpua-cards{display:grid;grid-template-columns:1fr 1fr;gap:6px;padding:4px 0}',
-      '#tpua-panel .tpua-card{background:rgba(255,255,255,0.04);border-radius:6px;padding:8px 10px;text-align:center}',
-      '#tpua-panel .tpua-card-val{font-size:14px;font-weight:700}',
-      '#tpua-panel .tpua-card-label{font-size:9px;color:#888;margin-top:1px}',
-      '#tpua-panel .tpua-warning{margin:0 14px 6px;padding:6px 10px;background:rgba(255,107,107,0.1);border:1px solid rgba(255,107,107,0.2);border-radius:6px;font-size:10px;color:#FF6B6B}',
+      '#tpua-panel .tpua-warning{margin:0 14px 8px;padding:6px 10px;background:rgba(255,107,107,0.1);border:1px solid rgba(255,107,107,0.2);border-radius:6px;font-size:10px;color:#FF6B6B}',
       '#tpua-panel .tpua-error{padding:10px 14px;color:#FF6B6B;font-size:12px;text-align:center}',
       '#tpua-panel .tpua-error-sub{margin-top:4px;font-size:11px;color:#888}',
       '#tpua-panel .tpua-error-bar{padding:8px 14px;font-size:11px;color:#FF9800;text-align:center}',
