@@ -24,7 +24,7 @@ function formatCost(cost) {
 }
 
 function render(data) {
-  const { pacing, todayUsed, timestamp } = data;
+  const { pacing, todayUsed, records, timestamp, stale } = data;
   const { spent, budget, pct, dailyQuota, statusIcon, statusText, warning, remainingWd, totalDays, monthElapsedPct } = pacing;
   const now = new Date();
   const dayPct = ((now.getHours() * 60 + now.getMinutes()) / 1440) * 100;
@@ -32,9 +32,10 @@ function render(data) {
 
   let html = '';
 
-  // Header
+  // Header with stale warning
+  const staleNotice = stale ? ' ⚠️ 数据可能已过期' : '';
   html += `<div class="header">
-    <div class="status">${statusIcon} ¥${spent.toFixed(0)}/¥${budget.toFixed(0)} · ${statusText}</div>
+    <div class="status">${statusIcon} ¥${spent.toFixed(0)}/¥${budget.toFixed(0)} · ${statusText}${staleNotice}</div>
     <div class="time-label">${timeAgo(timestamp)}</div>
   </div>`;
 
@@ -68,7 +69,7 @@ function render(data) {
   html += `<div class="details-grid">
     <div class="detail-card">
       <div class="value">¥${dailyQuota.toFixed(0)}</div>
-      <div class="label">每日剩余额度</div>
+      <div class="label">目标日均消耗</div>
     </div>
     <div class="detail-card">
       <div class="value">${remainingWd}</div>

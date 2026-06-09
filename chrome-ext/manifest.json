@@ -3,16 +3,24 @@
   "name": "TokenPUA",
   "version": "1.0.0",
   "description": "实时显示 Token 额度使用进度",
-  "permissions": ["alarms", "storage", "scripting"],
-  "host_permissions": ["https://token.woa.com/*", "https://*.woa.com/*"],
+  "permissions": ["alarms", "storage"],
+  "host_permissions": ["https://token.woa.com/*"],
   "background": {
     "service_worker": "background.js"
   },
-  "content_scripts": [{
-    "matches": ["https://token.woa.com/*"],
-    "js": ["content.js"],
-    "run_at": "document_idle"
-  }],
+  "content_scripts": [
+    {
+      "matches": ["https://token.woa.com/*"],
+      "js": ["content-main.js"],
+      "world": "MAIN",
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://token.woa.com/*"],
+      "js": ["content-bridge.js"],
+      "run_at": "document_idle"
+    }
+  ],
   "action": {
     "default_popup": "popup.html",
     "default_title": "TokenPUA"
