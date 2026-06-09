@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    :root {
+      --bg: #1a1a2e;
+      --card: #16213e;
+      --text: #e0e0e0;
+      --text-dim: #888;
+      --green: #4CAF50;
+      --yellow: #FF9800;
+      --red: #F44336;
+      --blue: #2196F3;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      width: 420px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      padding: 16px;
+      font-size: 13px;
+    }
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+    .status {
+      font-size: 15px;
+      font-weight: 600;
+    }
+    .time-label {
+      color: var(--text-dim);
+      font-size: 11px;
+    }
+    .section-title {
+      color: var(--text-dim);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin: 12px 0 6px;
+    }
+    .bar-container {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 4px 0;
+    }
+    .bar-label {
+      width: 32px;
+      color: var(--text-dim);
+      font-size: 11px;
+      flex-shrink: 0;
+    }
+    .bar-track {
+      flex: 1;
+      height: 18px;
+      background: #2a2a3e;
+      border-radius: 9px;
+      overflow: hidden;
+      position: relative;
+    }
+    .bar-fill {
+      height: 100%;
+      border-radius: 9px;
+      transition: width 0.3s;
+    }
+    .bar-fill.green { background: var(--green); }
+    .bar-fill.yellow { background: var(--yellow); }
+    .bar-fill.red { background: var(--red); }
+    .bar-fill.blue { background: var(--blue); }
+    .bar-text {
+      font-size: 12px;
+      font-family: 'SF Mono', 'Menlo', monospace;
+      white-space: nowrap;
+      min-width: 100px;
+      text-align: right;
+    }
+    .details-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin: 8px 0;
+    }
+    .detail-card {
+      background: var(--card);
+      border-radius: 8px;
+      padding: 10px;
+      text-align: center;
+    }
+    .detail-card .value {
+      font-size: 16px;
+      font-weight: 600;
+      font-family: 'SF Mono', 'Menlo', monospace;
+    }
+    .detail-card .label {
+      color: var(--text-dim);
+      font-size: 11px;
+      margin-top: 2px;
+    }
+    .warning {
+      background: #3e2723;
+      color: #ff8a65;
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: 12px;
+      margin: 8px 0;
+    }
+    .records-table {
+      margin-top: 8px;
+      max-height: 300px;
+      overflow-y: auto;
+    }
+    .record-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 4px 0;
+      border-bottom: 1px solid #2a2a3e;
+      font-size: 11px;
+      font-family: 'SF Mono', 'Menlo', monospace;
+    }
+    .record-row .cost { text-align: right; }
+    .record-row .cost.high { color: var(--red); }
+    .record-row .cost.medium { color: #CC9900; }
+    .record-row .cost.low { color: var(--text-dim); }
+    .error-state {
+      text-align: center;
+      padding: 40px 20px;
+      color: var(--text-dim);
+    }
+    .error-state .emoji { font-size: 32px; margin-bottom: 8px; }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div class="error-state" id="loading">
+      <div class="emoji">⏳</div>
+      <div>加载中...</div>
+    </div>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>
