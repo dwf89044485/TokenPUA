@@ -466,7 +466,7 @@
 
   function injectStyles() {
     const css = [
-      '#tpua-panel{position:fixed;top:90px;left:10px;right:10px;z-index:2147483647;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;font-size:12px;color:#e0e0e0;background:rgba(26,26,46,0.95);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,0.08);border-radius:10px;box-shadow:0 8px 32px rgba(0,0,0,0.4);user-select:none;max-width:900px;margin:0 auto}',
+      '#tpua-panel{position:fixed;top:90px;left:10px;right:10px;z-index:2147483647;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;font-size:12px;color:#e0e0e0;background:rgba(26,26,46,0.95);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,0.08);border-radius:10px;box-shadow:0 8px 32px rgba(0,0,0,0.4);user-select:none;max-width:1080px;margin:0 auto}',
       '#tpua-panel .tpua-header{display:flex;align-items:center;justify-content:space-between;padding:8px 14px;border-bottom:1px solid rgba(255,255,255,0.06)}',
       '#tpua-panel .tpua-status{font-weight:600;font-size:13px}',
       '#tpua-panel .tpua-header-actions{display:flex;align-items:center;gap:10px}',
@@ -481,7 +481,7 @@
       '#tpua-panel .tpua-block-progress .tpua-bar-row{width:100%}',
       '#tpua-panel .tpua-block+.tpua-block{border-left:1px solid rgba(255,255,255,0.06)}',
       '#tpua-panel .tpua-cards-row{display:flex;flex-direction:row;gap:6px;justify-content:center;width:100%}',
-      '#tpua-panel .tpua-card{background:rgba(255,255,255,0.04);border-radius:6px;padding:8px 10px;text-align:center;flex:1;min-width:0}',
+      '#tpua-panel .tpua-card{background:rgba(255,255,255,0.04);border-radius:6px;padding:10px 14px;text-align:center;flex:1;min-width:0;white-space:nowrap}',
       '#tpua-panel .tpua-card-val{font-size:14px;font-weight:700}',
       '#tpua-panel .tpua-card-label{font-size:9px;color:#888;margin-top:1px}',
       '#tpua-panel .tpua-section-title{padding:0 0 6px;font-size:10px;color:#888;text-transform:uppercase;letter-spacing:0.5px}',
