@@ -94,19 +94,7 @@
   }
 
   async function apiGet(path) {
-    // Try to use the page's own apiFetch if available (handles token refresh)
-    if (typeof apiFetch === 'function') {
-      console.log('TokenPUA [main]: using page apiFetch for', path);
-      try {
-        const data = await apiFetch(path, { credentials: 'include' });
-        return data;
-      } catch (e) {
-        // page's apiFetch may auto-reload on token_expired; if we're here, it's a different error
-        throw new Error('apiFetch error: ' + e.message);
-      }
-    }
-
-    // Fallback: our own fetch with X-Page-Token
+    // Use our own fetch with X-Page-Token header
     const headers = {};
     const pt = getPageToken();
     if (pt) headers['X-Page-Token'] = pt;
