@@ -340,7 +340,7 @@
     // Block 1: 4 cards in a horizontal row
     h += '<div class="tpua-block">';
     h += '<div class="tpua-cards-row">';
-    h += '<div class="tpua-card"><div class="tpua-card-val">' + p.remainingWd + '</div><div class="tpua-card-label">剩余工作日</div></div>';
+    h += '<div class="tpua-card"><div class="tpua-card-val">' + p.remainingWd + '天</div><div class="tpua-card-label">剩余工作日</div></div>';
     h += '<div class="tpua-card"><div class="tpua-card-val">¥' + todayUsed.toFixed(1) + '</div><div class="tpua-card-label">今日已用</div></div>';
     h += '<div class="tpua-card"><div class="tpua-card-val">¥' + p.dailyQuota.toFixed(0) + '</div><div class="tpua-card-label">日额度</div></div>';
     h += '<div class="tpua-card"><div class="tpua-card-val">¥' + remaining.toFixed(0) + '</div><div class="tpua-card-label">剩余总额</div></div>';
