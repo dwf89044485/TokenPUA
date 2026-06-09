@@ -540,7 +540,7 @@
 
     const panel = document.createElement('div');
     panel.id = 'tpua-panel';
-    panel.className = 'collapsed';
+    panel.className = 'expanded';
     panel.innerHTML = renderLoading();
     document.body.appendChild(panel);
     console.log('TokenPUA: panel injected');
@@ -647,7 +647,7 @@
         p.budget = cache.spent > 0 ? Math.max(cache.spent * 1.5, 1000) : 1000;
         p.pct = p.spent / p.budget * 100;
       }
-      panel.innerHTML = renderCollapsed(p);
+      panel.innerHTML = renderExpanded(p, cache.today_used || 0, (cache.records || []).slice(0, RECORDS_DISPLAY_LIMIT), cache.timestamp || Date.now());
     } else {
       panel.innerHTML = renderLoading();
     }
