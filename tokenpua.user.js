@@ -28,8 +28,6 @@
   const RECORDS_CACHE_LIMIT = 200;
   const RECORDS_DISPLAY_LIMIT = 45;
 
-  const MODEL_ALIASES = { 'DeepSeek': 'DS' };
-
   const STATUS_THRESHOLDS = [
     { min: 1.3, icon: '\u{1F7E5}', text: '加速',   color: '#F44336' },
     { min: 1.1, icon: '\u{1F7E1}', text: '稍加速', color: '#FF9800' },
@@ -358,11 +356,12 @@
       timestamp: lastFetchTimestamp,
     });
 
-    // Calculate pacing
+    // Calculate remaining workdays from TOMORROW (today is already partially consumed)
     const yd = new Date(), ym = yd.getMonth();
     const totalDays = new Date(yd.getFullYear(), ym + 1, 0).getDate();
     const monthEnd = new Date(yd.getFullYear(), ym, totalDays);
-    const remainingWd = countWorkdays(yd, monthEnd);
+    const tomorrow = new Date(yd.getFullYear(), yd.getMonth(), yd.getDate() + 1);
+    const remainingWd = countWorkdays(tomorrow, monthEnd);
     const pacing = calcPacing(totalUsed, totalQuota, remainingWd);
 
     return { pacing, todayUsed, records: records.slice(0, RECORDS_DISPLAY_LIMIT), timestamp: lastFetchTimestamp };
@@ -377,21 +376,13 @@
     return '<div class="tpua-bar-track"><div class="tpua-bar-fill" style="width:' + Math.min(pct, 100) + '%;background:' + c + '"></div></div>';
   }
 
-  function costClass(cost) {
-    if (cost > 100) return 'tpua-cost-high';
-    if (cost > 50) return 'tpua-cost-med';
-    if (cost > 20) return 'tpua-cost-warn';
-    if (cost < 0.0005) return 'tpua-cost-dim';
-    return '';
-  }
-
   function renderCollapsed(p) {
     return '<div class="tpua-collapsed-inner" onclick="document.getElementById(\'tpua-panel\').classList.replace(\'collapsed\',\'expanded\')">' +
       p.statusIcon + ' <span class="tpua-collapsed-amount">¥' + p.spent.toFixed(0) + '/¥' + p.budget.toFixed(0) + '</span> · ' + p.statusText +
       '<span class="tpua-toggle-icon">▲</span></div>';
   }
 
-  function renderExpanded(p, todayUsed, records, timestamp) {
+  function renderExpanded(p, todayUsed, timestamp) {
     const now = new Date();
     const dayPct = ((now.getHours() * 60 + now.getMinutes()) / 1440) * 100;
     const dayQuotaPct = p.dailyQuota > 0 ? (todayUsed / p.dailyQuota) * 100 : 0;
@@ -400,7 +391,6 @@
     let h = '';
     h += '<div class="tpua-header"><div class="tpua-status" style="color:' + p.statusColor + '">' + p.statusIcon + ' ¥' + p.spent.toFixed(0) + '/¥' + p.budget.toFixed(0) + ' · ' + p.statusText + '</div>';
     h += '<div class="tpua-header-actions">';
-    h += '<span class="tpua-header-btn" onclick="document.getElementById(\'tpua-panel\').classList.replace(\'expanded\',\'collapsed\')">▼</span>';
     h += '<span class="tpua-header-btn" onclick="document.getElementById(\'tpua-panel\').remove()">×</span>';
     h += '</div></div>';
 
@@ -421,24 +411,6 @@
 
     if (p.warning) {
       h += '<div class="tpua-warning">⚠️ ' + p.warning + '</div>';
-    }
-
-    if (records && records.length > 0) {
-      h += '<div class="tpua-section-title">近期消费记录</div><div class="tpua-records">';
-      for (const rec of records) {
-        let model = rec.model;
-        for (const [pfx, alias] of Object.entries(MODEL_ALIASES)) {
-          if (model.startsWith(pfx)) { model = alias + model.slice(pfx.length); break; }
-        }
-        if (model.startsWith('Claude-')) model = model.slice(7);
-        model = model.length > 18 ? model.slice(0, 18) : model;
-        const ts = rec.time.length >= 16 ? rec.time.slice(11, 16) : rec.time;
-        const cs = '¥' + rec.cost.toFixed(3);
-        const tks = rec.total_tokens.toLocaleString();
-        const cls = costClass(rec.cost);
-        h += '<div class="tpua-record-row"><span>' + ts + '  ' + cs + '</span><span class="' + cls + '">' + model + '  ' + tks + '</span></div>';
-      }
-      h += '</div>';
     }
 
     h += '<div class="tpua-footer">';
@@ -468,13 +440,13 @@
     const now = new Date();
     const totalDays = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
     const monthEnd = new Date(now.getFullYear(), now.getMonth(), totalDays);
-    const rwd = countWorkdays(now, monthEnd) || 10;
+    const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+    const rwd = countWorkdays(tomorrow, monthEnd) || 10;
     const budget = cache.spent > 0 ? Math.max(cache.spent / 0.5, 1000) : 1000;
     const p = calcPacing(cache.spent, budget, rwd);
 
     panel.innerHTML = '<div class="tpua-error-bar">⚠️ 网络错误，显示缓存数据</div>' +
-      renderExpanded(p, cache.today_used || 0, (cache.records || []).slice(0, RECORDS_DISPLAY_LIMIT), cache.timestamp || Date.now());
-    panel.classList.replace('collapsed', 'expanded');
+      renderExpanded(p, cache.today_used || 0, cache.timestamp || Date.now());
   }
 
   // ============================================================
@@ -512,7 +484,7 @@
       if (panel.classList.contains('collapsed')) {
         panel.innerHTML = renderCollapsed(data.pacing);
       } else {
-        panel.innerHTML = renderExpanded(data.pacing, data.todayUsed, data.records, data.timestamp);
+        panel.innerHTML = renderExpanded(data.pacing, data.todayUsed, data.timestamp);
       }
       panel.dataset.state = 'loaded';
     } catch (e) {
@@ -641,13 +613,14 @@
       var now = new Date();
       var totalDays = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
       var monthEnd = new Date(now.getFullYear(), now.getMonth(), totalDays);
-      var rwd = countWorkdays(now, monthEnd);
-      var p = calcPacing(cache.spent, cache.spent > 0 ? Math.max(cache.spent / 0.5, 1000) : 1000, rwd || 10);
+      var tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+      var rwd = countWorkdays(tomorrow, monthEnd) || 10;
+      var p = calcPacing(cache.spent, cache.spent > 0 ? Math.max(cache.spent / 0.5, 1000) : 1000, rwd);
       if (!cache.budget) {
         p.budget = cache.spent > 0 ? Math.max(cache.spent * 1.5, 1000) : 1000;
         p.pct = p.spent / p.budget * 100;
       }
-      panel.innerHTML = renderExpanded(p, cache.today_used || 0, (cache.records || []).slice(0, RECORDS_DISPLAY_LIMIT), cache.timestamp || Date.now());
+      panel.innerHTML = renderExpanded(p, cache.today_used || 0, cache.timestamp || Date.now());
     } else {
       panel.innerHTML = renderLoading();
     }
