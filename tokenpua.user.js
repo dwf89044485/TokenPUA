@@ -311,7 +311,7 @@
       color = '#9C27B0';
     }
     return {
-      text: msg + '  |  ¥' + todayUsed.toFixed(0) + '/¥' + dailyQuota.toFixed(0),
+      text: msg + '　　|　　今日已用' + dayQuotaPct.toFixed(0) + '%',
       color: color
     };
   }
@@ -350,7 +350,7 @@
     // Block 2: day progress
     h += '<div class="tpua-block tpua-block-progress">';
     h += '<div class="tpua-section-title">日进度</div>';
-    h += '<div class="tpua-bar-row"><span class="tpua-bar-label">额度</span>' + renderBar(Math.min(dayQuotaPct, 100)) + '<span class="tpua-bar-num">' + Math.min(dayQuotaPct, 100).toFixed(0) + '%  ¥' + todayUsed.toFixed(1) + '/¥' + p.dailyQuota.toFixed(0) + '</span></div>';
+    h += '<div class="tpua-bar-row"><span class="tpua-bar-label">额度</span>' + renderBar(Math.min(dayQuotaPct, 100)) + '<span class="tpua-bar-num">' + dayQuotaPct.toFixed(0) + '%  ¥' + todayUsed.toFixed(1) + '/¥' + p.dailyQuota.toFixed(0) + '</span></div>';
     h += '<div class="tpua-bar-row"><span class="tpua-bar-label">时间</span>' + renderBar(dayPct, '#8888cc') + '<span class="tpua-bar-num">' + dayPct.toFixed(0) + '%  ' + String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0') + '/24:00</span></div>';
     h += '</div>'; // block 2
 
