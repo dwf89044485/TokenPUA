@@ -3,8 +3,8 @@
   "name": "TokenPUA",
   "version": "1.0.0",
   "description": "macOS 菜单栏工具 TokenPUA 的 Chrome 扩展版 — 实时显示 Token 额度使用进度",
-  "permissions": ["alarms", "storage"],
-  "host_permissions": ["https://token.woa.com/*"],
+  "permissions": ["alarms", "storage", "cookies"],
+  "host_permissions": ["https://*.woa.com/*"],
   "background": {
     "service_worker": "background.js"
   },

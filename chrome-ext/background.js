@@ -48,32 +48,75 @@ function calcPacing(spent, budget, remainingWd) {
   return { spent, budget, pct: spent / budget * 100, dailyQuota, statusIcon: icon, statusText: text, warning, remainingWd, totalDays, monthElapsedPct };
 }
 
+// ─── 通过 chrome.cookies API 获取 Cookie 字符串 ───
+function buildCookieString() {
+  return new Promise((resolve, reject) => {
+    // 同时从 token.woa.com 和 .woa.com 读取 cookie
+    chrome.cookies.getAll({ domain: 'token.woa.com' }, (tokenCookies) => {
+      chrome.cookies.getAll({ domain: '.woa.com' }, (woaCookies) => {
+        if (chrome.runtime.lastError) {
+          reject(chrome.runtime.lastError);
+          return;
+        }
+        const all = [...(tokenCookies || []), ...(woaCookies || [])];
+        // 去重：同名 cookie 取第一个（浏览器按精确域名优先）
+        const seen = new Set();
+        const pairs = [];
+        for (const c of all) {
+          // .woa.com 的 cookie 优先 token.woa.com（order: token.woa.com > .woa.com 具体子域 > .woa.com）
+          const key = c.name;
+          if (seen.has(key)) {
+            // 已存在同名 cookie，如果当前是 token.woa.com 的则替换（更精确）
+            const idx = pairs.findIndex(p => p.name === key);
+            if (idx !== -1 && c.domain === 'token.woa.com') {
+              pairs[idx] = c;
+            }
+            continue;
+          }
+          seen.add(key);
+          pairs.push(c);
+        }
+        // 按名称拼接成 Cookie 字符串
+        const cookieStr = pairs.map(c => `${c.name}=${c.value}`).join('; ');
+        resolve(cookieStr);
+      });
+    });
+  });
+}
+
 // ─── 数据获取 ───────────────────────────
+async function fetchWithCookie(url, cookieStr) {
+  const resp = await fetch(url, {
+    credentials: 'omit', // 不用默认 cookie，我们手动传递
+    headers: { 'Cookie': cookieStr, 'User-Agent': 'TokenPUA/1.0' }
+  });
+  if (!resp.ok) {
+    const body = await resp.text().catch(() => '');
+    throw new Error(`HTTP ${resp.status}: ${body.slice(0, 100)}`);
+  }
+  return resp.json();
+}
+
 async function fetchAll() {
+  const cookieStr = await buildCookieString();
+  if (!cookieStr) {
+    throw new Error('未获取到登录 Cookie，请先登录 token.woa.com');
+  }
+
   const todayStr = new Date().toISOString().slice(0, 10);
   const monthStart = todayStr.slice(0, 7) + '-01';
 
-  // 并行请求
-  const [quotaRes, usageRes, detailsRes] = await Promise.all([
-    fetch(`${BASE_URL}/api/query-quota?platform=codebuddy`, { credentials: 'include' }),
-    fetch(`${BASE_URL}/api/usage-summary?start_date=${todayStr}&end_date=${todayStr}&dimension=personal&platform=all`, { credentials: 'include' }),
-    fetch(`${BASE_URL}/api/usage-details?start_date=${monthStart}&end_date=${todayStr}&dimension=all&page=1&page_size=50&platform=all`, { credentials: 'include' }),
+  const [quota, usage, details] = await Promise.all([
+    fetchWithCookie(`${BASE_URL}/api/query-quota?platform=codebuddy`, cookieStr),
+    fetchWithCookie(`${BASE_URL}/api/usage-summary?start_date=${todayStr}&end_date=${todayStr}&dimension=personal&platform=all`, cookieStr),
+    fetchWithCookie(`${BASE_URL}/api/usage-details?start_date=${monthStart}&end_date=${todayStr}&dimension=all&page=1&page_size=50&platform=all`, cookieStr).catch(() => null),
   ]);
-
-  if (!quotaRes.ok || !usageRes.ok) {
-    throw new Error(`API error: quota=${quotaRes.status} usage=${usageRes.status}`);
-  }
-
-  const quota = await quotaRes.json();
-  const usage = await usageRes.json();
-  const details = detailsRes.ok ? await detailsRes.json() : null;
 
   // 计算今日消耗
   let todayUsed = 0;
   if (usage && usage.data) {
     for (const item of usage.data) {
-      const cost = parseFloat(String(item.cost || '0').replace(/[¥,]/g, '')) || 0;
-      todayUsed += cost;
+      todayUsed += parseFloat(String(item.cost || '0').replace(/[¥,]/g, '')) || 0;
     }
   }
 
@@ -112,9 +155,9 @@ async function fetchAll() {
 function updateBadge(data) {
   const pct = Math.round(data.pacing.pct);
   const text = `${pct}%`;
-  let color = '#4CAF50'; // 绿
-  if (pct > 90) color = '#F44336'; // 红
-  else if (pct > 70) color = '#FF9800'; // 橙
+  let color = '#4CAF50';
+  if (pct > 90) color = '#F44336';
+  else if (pct > 70) color = '#FF9800';
 
   chrome.action.setBadgeText({ text });
   chrome.action.setBadgeBackgroundColor({ color });
@@ -128,8 +171,7 @@ async function refresh() {
     updateBadge(data);
     return true;
   } catch (e) {
-    console.error('TokenPUA refresh failed:', e);
-    // 保留旧数据，不更新 badge
+    console.error('TokenPUA refresh failed:', e.message);
     return false;
   }
 }
@@ -137,7 +179,7 @@ async function refresh() {
 // ─── 生命周期 ───────────────────────────
 chrome.runtime.onInstalled.addListener(() => {
   chrome.alarms.create('refresh', { periodInMinutes: REFRESH_INTERVAL });
-  refresh(); // 立即刷新一次
+  refresh();
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
