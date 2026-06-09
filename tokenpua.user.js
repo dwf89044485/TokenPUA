@@ -287,25 +287,30 @@
     return '<div class="tpua-bar-track"><div class="tpua-bar-fill" style="width:' + Math.min(pct, 100) + '%;background:' + c + '"></div></div>';
   }
 
-  function renderCollapsed(p) {
-    return '<div class="tpua-collapsed-inner" onclick="document.getElementById(\'tpua-panel\').classList.replace(\'collapsed\',\'expanded\')">' +
-      p.statusIcon + ' <span class="tpua-collapsed-amount">¥' + p.spent.toFixed(0) + '/¥' + p.budget.toFixed(0) + '</span> · ' + p.statusText +
-      '<span class="tpua-toggle-icon">▲</span></div>';
-  }
-
   function renderExpanded(p, todayUsed, timestamp) {
     const now = new Date();
     const dayPct = ((now.getHours() * 60 + now.getMinutes()) / 1440) * 100;
     const dayQuotaPct = p.dailyQuota > 0 ? (todayUsed / p.dailyQuota) * 100 : 0;
     const remaining = p.budget - p.spent;
 
-    let h = '';
-    h += '<div class="tpua-header"><div class="tpua-status" style="color:' + p.statusColor + '">' + p.statusIcon + ' ¥' + p.spent.toFixed(0) + '/¥' + p.budget.toFixed(0) + ' · ' + p.statusText + '</div>';
-    h += '<div class="tpua-header-actions">';
-    h += '<span class="tpua-header-btn" onclick="document.getElementById(\'tpua-panel\').remove()">×</span>';
-    h += '</div></div>';
+    // ── Header row ──
+    var h = '<div class="tpua-header">' +
+      '<div class="tpua-status" style="color:' + p.statusColor + '">' +
+        p.statusIcon + ' ¥' + p.spent.toFixed(0) + '/¥' + p.budget.toFixed(0) + ' · ' + p.statusText +
+      '</div>' +
+      '<div class="tpua-header-actions">' +
+        '<span class="tpua-refresh-inline" onclick="window.__tpuaRefresh()">🔄 ' + timeAgo(timestamp) + '</span>' +
+        '<span class="tpua-header-btn" onclick="document.getElementById(\'tpua-panel\').remove()">×</span>' +
+      '</div>' +
+    '</div>';
 
+    // ── Body: left (progress) + right (cards) ──
+    h += '<div class="tpua-body">';
+
+    // Left column: progress bars
+    h += '<div class="tpua-left">';
     h += '<div class="tpua-section-title">月进度</div>';
+
     h += '<div class="tpua-bar-row"><span class="tpua-bar-label">额度</span>' + renderBar(p.pct) + '<span class="tpua-bar-num">' + p.pct.toFixed(0) + '%  ¥' + p.spent.toFixed(0) + '/¥' + p.budget.toFixed(0) + '</span></div>';
     h += '<div class="tpua-bar-row"><span class="tpua-bar-label">时间</span>' + renderBar(p.monthElapsedPct, '#8888cc') + '<span class="tpua-bar-num">' + p.monthElapsedPct.toFixed(0) + '%  ' + now.getDate() + '/' + p.totalDays + '天</span></div>';
 
@@ -313,21 +318,24 @@
     h += '<div class="tpua-bar-row"><span class="tpua-bar-label">额度</span>' + renderBar(Math.min(dayQuotaPct, 100)) + '<span class="tpua-bar-num">' + Math.min(dayQuotaPct, 100).toFixed(0) + '%  ¥' + todayUsed.toFixed(1) + '/¥' + p.dailyQuota.toFixed(0) + '</span></div>';
     h += '<div class="tpua-bar-row"><span class="tpua-bar-label">时间</span>' + renderBar(dayPct, '#8888cc') + '<span class="tpua-bar-num">' + dayPct.toFixed(0) + '%  ' + String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0') + '/24:00</span></div>';
 
+    h += '</div>'; // left
+
+    // Right column: 4 cards
+    h += '<div class="tpua-right">';
     h += '<div class="tpua-cards">';
     h += '<div class="tpua-card"><div class="tpua-card-val">¥' + p.dailyQuota.toFixed(0) + '</div><div class="tpua-card-label">目标日均</div></div>';
     h += '<div class="tpua-card"><div class="tpua-card-val">' + p.remainingWd + '</div><div class="tpua-card-label">剩余工作日</div></div>';
     h += '<div class="tpua-card"><div class="tpua-card-val">¥' + remaining.toFixed(0) + '</div><div class="tpua-card-label">剩余总额</div></div>';
     h += '<div class="tpua-card"><div class="tpua-card-val">¥' + todayUsed.toFixed(1) + '</div><div class="tpua-card-label">今日已用</div></div>';
-    h += '</div>';
+    h += '</div>'; // cards
+    h += '</div>'; // right
 
+    h += '</div>'; // body
+
+    // ── Warning (if any) ──
     if (p.warning) {
       h += '<div class="tpua-warning">⚠️ ' + p.warning + '</div>';
     }
-
-    h += '<div class="tpua-footer">';
-    h += '<span class="tpua-refresh-btn" onclick="window.__tpuaRefresh()">🔄 刷新（' + timeAgo(timestamp) + '）</span>';
-    h += '<a href="' + DASHBOARD_URL + '" class="tpua-dashboard-link">打开看板 →</a>';
-    h += '</div>';
 
     return h;
   }
@@ -380,10 +388,6 @@
     if (!panel) return;
 
     try {
-      if (panel.classList.contains('expanded')) {
-        panel.innerHTML = renderLoading();
-      }
-
       const data = await fetchAllData();
 
       if (data.pacing.budget <= 0) {
@@ -391,11 +395,7 @@
         data.pacing.pct = data.pacing.spent / 1000 * 100;
       }
 
-      if (panel.classList.contains('collapsed')) {
-        panel.innerHTML = renderCollapsed(data.pacing);
-      } else {
-        panel.innerHTML = renderExpanded(data.pacing, data.todayUsed, data.timestamp);
-      }
+      panel.innerHTML = renderExpanded(data.pacing, data.todayUsed, data.timestamp);
       panel.dataset.state = 'loaded';
     } catch (e) {
       console.error('TokenPUA refresh error:', e);
@@ -422,8 +422,7 @@
 
     const panel = document.createElement('div');
     panel.id = 'tpua-panel';
-    panel.className = 'expanded';
-    panel.innerHTML = renderLoading();
+    panel.innerHTML = '加载中...';
     document.body.appendChild(panel);
     console.log('TokenPUA: panel injected');
 
@@ -436,51 +435,36 @@
 
   function injectStyles() {
     const css = [
-      '#tpua-panel{position:fixed;bottom:16px;right:16px;z-index:2147483647;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;font-size:13px;color:#e0e0e0;background:rgba(26,26,46,0.95);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,0.08);border-radius:10px;box-shadow:0 8px 32px rgba(0,0,0,0.4);user-select:none;max-height:80vh;overflow:hidden}',
-      '#tpua-panel.collapsed{width:auto;height:40px}',
-      '#tpua-panel.expanded{width:380px;max-height:80vh;overflow-y:auto}',
-      '.tpua-collapsed-inner{display:flex;align-items:center;height:40px;padding:0 14px;gap:6px;cursor:pointer;white-space:nowrap}',
-      '.tpua-collapsed-amount{font-weight:600}',
-      '.tpua-toggle-icon{font-size:10px;opacity:0.5;margin-left:4px}',
-      '.tpua-header{display:flex;align-items:center;justify-content:space-between;padding:14px 16px 12px;border-bottom:1px solid rgba(255,255,255,0.06)}',
-      '.tpua-status{font-weight:600;font-size:13px}',
-      '.tpua-header-actions{display:flex;gap:8px}',
-      '.tpua-header-btn{cursor:pointer;opacity:0.5;font-size:14px;padding:2px 4px;border-radius:4px}',
-      '.tpua-header-btn:hover{opacity:1;background:rgba(255,255,255,0.1)}',
-      '.tpua-section-title{padding:10px 16px 4px;font-size:11px;color:#888;text-transform:uppercase;letter-spacing:0.5px}',
-      '.tpua-bar-row{display:flex;align-items:center;padding:4px 16px;gap:10px}',
-      '.tpua-bar-label{width:32px;font-size:11px;color:#888;text-align:right;flex-shrink:0}',
-      '.tpua-bar-track{flex:1;height:14px;background:rgba(255,255,255,0.06);border-radius:7px;overflow:hidden}',
-      '.tpua-bar-fill{height:100%;border-radius:7px;transition:width 0.4s ease}',
-      '.tpua-bar-num{font-size:11px;color:#aaa;white-space:nowrap;min-width:90px;text-align:left}',
-      '.tpua-cards{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:10px 16px 6px}',
-      '.tpua-card{background:rgba(255,255,255,0.04);border-radius:8px;padding:10px 12px;text-align:center}',
-      '.tpua-card-val{font-size:16px;font-weight:700}',
-      '.tpua-card-label{font-size:10px;color:#888;margin-top:2px}',
-      '.tpua-warning{margin:8px 16px;padding:8px 12px;background:rgba(255,107,107,0.1);border:1px solid rgba(255,107,107,0.2);border-radius:6px;font-size:11px;color:#FF6B6B}',
-      '.tpua-records{max-height:320px;overflow-y:auto;padding:0 16px 8px}',
-      '.tpua-record-row{display:flex;justify-content:space-between;padding:3px 0;font-size:11px;font-family:Menlo,Monaco,monospace;border-bottom:1px solid rgba(255,255,255,0.03)}',
-      '.tpua-record-row:last-child{border-bottom:none}',
-      '.tpua-cost-high{color:#cc3333}',
-      '.tpua-cost-med{color:#e05530}',
-      '.tpua-cost-warn{color:#c09030}',
-      '.tpua-cost-dim{color:#666}',
-      '.tpua-footer{display:flex;justify-content:space-between;align-items:center;padding:10px 16px 14px;border-top:1px solid rgba(255,255,255,0.06);font-size:11px}',
-      '.tpua-refresh-btn{cursor:pointer;color:#aaa}',
-      '.tpua-refresh-btn:hover{color:#fff}',
-      '.tpua-dashboard-link{color:#888;text-decoration:none}',
-      '.tpua-dashboard-link:hover{color:#4CAF50}',
-      '.tpua-error{padding:10px 16px;color:#FF6B6B;font-size:12px;text-align:center}',
-      '.tpua-error-sub{margin-top:4px;font-size:11px;color:#888}',
-      '.tpua-error-bar{padding:8px 16px;font-size:12px;color:#FF9800;text-align:center}',
-      '.tpua-records::-webkit-scrollbar{width:4px}',
-      '.tpua-records::-webkit-scrollbar-track{background:transparent}',
-      '.tpua-records::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.1);border-radius:2px}',
+      '#tpua-panel{position:fixed;top:90px;left:10px;right:10px;z-index:2147483647;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;font-size:12px;color:#e0e0e0;background:rgba(26,26,46,0.95);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,0.08);border-radius:10px;box-shadow:0 8px 32px rgba(0,0,0,0.4);user-select:none;max-width:720px;margin:0 auto}',
+      '#tpua-panel .tpua-header{display:flex;align-items:center;justify-content:space-between;padding:8px 14px;border-bottom:1px solid rgba(255,255,255,0.06)}',
+      '#tpua-panel .tpua-status{font-weight:600;font-size:13px}',
+      '#tpua-panel .tpua-header-actions{display:flex;align-items:center;gap:10px}',
+      '#tpua-panel .tpua-refresh-inline{cursor:pointer;font-size:11px;color:#aaa}',
+      '#tpua-panel .tpua-refresh-inline:hover{color:#fff}',
+      '#tpua-panel .tpua-header-btn{cursor:pointer;opacity:0.5;font-size:16px;padding:0 4px;border-radius:4px}',
+      '#tpua-panel .tpua-header-btn:hover{opacity:1;background:rgba(255,255,255,0.1)}',
+      '#tpua-panel .tpua-body{display:flex;flex-direction:row;gap:0}',
+      '#tpua-panel .tpua-left{flex:1;min-width:0;padding:0 8px 6px 14px}',
+      '#tpua-panel .tpua-right{width:210px;flex-shrink:0;padding:0 14px 6px 8px;border-left:1px solid rgba(255,255,255,0.06)}',
+      '#tpua-panel .tpua-section-title{padding:6px 0 2px;font-size:10px;color:#888;text-transform:uppercase;letter-spacing:0.5px}',
+      '#tpua-panel .tpua-bar-row{display:flex;align-items:center;padding:2px 0;gap:8px}',
+      '#tpua-panel .tpua-bar-label{width:28px;font-size:10px;color:#888;text-align:right;flex-shrink:0}',
+      '#tpua-panel .tpua-bar-track{flex:1;height:12px;background:rgba(255,255,255,0.06);border-radius:6px;overflow:hidden}',
+      '#tpua-panel .tpua-bar-fill{height:100%;border-radius:6px;transition:width 0.4s ease}',
+      '#tpua-panel .tpua-bar-num{font-size:10px;color:#aaa;white-space:nowrap;min-width:80px;text-align:left}',
+      '#tpua-panel .tpua-cards{display:grid;grid-template-columns:1fr 1fr;gap:6px;padding:4px 0}',
+      '#tpua-panel .tpua-card{background:rgba(255,255,255,0.04);border-radius:6px;padding:8px 10px;text-align:center}',
+      '#tpua-panel .tpua-card-val{font-size:14px;font-weight:700}',
+      '#tpua-panel .tpua-card-label{font-size:9px;color:#888;margin-top:1px}',
+      '#tpua-panel .tpua-warning{margin:0 14px 6px;padding:6px 10px;background:rgba(255,107,107,0.1);border:1px solid rgba(255,107,107,0.2);border-radius:6px;font-size:10px;color:#FF6B6B}',
+      '#tpua-panel .tpua-error{padding:10px 14px;color:#FF6B6B;font-size:12px;text-align:center}',
+      '#tpua-panel .tpua-error-sub{margin-top:4px;font-size:11px;color:#888}',
+      '#tpua-panel .tpua-error-bar{padding:8px 14px;font-size:11px;color:#FF9800;text-align:center}',
       '#tpua-panel::-webkit-scrollbar{width:4px}',
       '#tpua-panel::-webkit-scrollbar-track{background:transparent}',
       '#tpua-panel::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.1);border-radius:2px}',
       '@keyframes tpua-spin{to{transform:rotate(360deg)}}',
-      '.tpua-spinner{display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,0.1);border-top-color:#4CAF50;border-radius:50%;animation:tpua-spin 0.6s linear infinite;margin-right:6px}',
+      '#tpua-panel .tpua-spinner{display:inline-block;width:12px;height:12px;border:2px solid rgba(255,255,255,0.1);border-top-color:#4CAF50;border-radius:50%;animation:tpua-spin 0.6s linear infinite;margin-right:6px}',
     ].join('');
 
     try {
