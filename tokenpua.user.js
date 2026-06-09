@@ -79,8 +79,22 @@
 
   const BASE = '${BASE_URL}';
 
+  // Read Page-Token from <meta name="pt"> (same as page's script.js)
+  function getPageToken() {
+    const meta = document.querySelector('meta[name="pt"]');
+    return meta ? meta.content : '';
+  }
+
   async function apiGet(path) {
-    const resp = await fetch(BASE + path, { credentials: 'include' });
+    const headers = {};
+    const pt = getPageToken();
+    if (pt) {
+      headers['X-Page-Token'] = pt;
+    }
+    const resp = await fetch(BASE + path, {
+      credentials: 'include',
+      headers: headers
+    });
     const text = await resp.text();
     if (!resp.ok) {
       if (resp.status === 401 || resp.status === 403) throw new Error('AUTH_EXPIRED');
