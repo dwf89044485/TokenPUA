@@ -356,12 +356,12 @@
       timestamp: lastFetchTimestamp,
     });
 
-    // Calculate remaining workdays from TOMORROW (today is already partially consumed)
+    // Calculate remaining workdays from TODAY (includes today)
     const yd = new Date(), ym = yd.getMonth();
     const totalDays = new Date(yd.getFullYear(), ym + 1, 0).getDate();
     const monthEnd = new Date(yd.getFullYear(), ym, totalDays);
-    const tomorrow = new Date(yd.getFullYear(), yd.getMonth(), yd.getDate() + 1);
-    const remainingWd = countWorkdays(tomorrow, monthEnd);
+    const remainingWd = countWorkdays(yd, monthEnd);
+    console.log('TokenPUA: today=' + fmtDate(yd) + ' monthEnd=' + fmtDate(monthEnd) + ' remainingWd=' + remainingWd);
     const pacing = calcPacing(totalUsed, totalQuota, remainingWd);
 
     return { pacing, todayUsed, records: records.slice(0, RECORDS_DISPLAY_LIMIT), timestamp: lastFetchTimestamp };
@@ -440,8 +440,7 @@
     const now = new Date();
     const totalDays = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
     const monthEnd = new Date(now.getFullYear(), now.getMonth(), totalDays);
-    const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
-    const rwd = countWorkdays(tomorrow, monthEnd) || 10;
+    const rwd = countWorkdays(now, monthEnd) || 10;
     const budget = cache.spent > 0 ? Math.max(cache.spent / 0.5, 1000) : 1000;
     const p = calcPacing(cache.spent, budget, rwd);
 
@@ -613,8 +612,7 @@
       var now = new Date();
       var totalDays = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
       var monthEnd = new Date(now.getFullYear(), now.getMonth(), totalDays);
-      var tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
-      var rwd = countWorkdays(tomorrow, monthEnd) || 10;
+      var rwd = countWorkdays(now, monthEnd) || 10;
       var p = calcPacing(cache.spent, cache.spent > 0 ? Math.max(cache.spent / 0.5, 1000) : 1000, rwd);
       if (!cache.budget) {
         p.budget = cache.spent > 0 ? Math.max(cache.spent * 1.5, 1000) : 1000;
