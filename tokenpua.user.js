@@ -287,16 +287,46 @@
     return '<div class="tpua-bar-track"><div class="tpua-bar-fill" style="width:' + Math.min(pct, 100) + '%;background:' + c + '"></div></div>';
   }
 
+  // 今日消耗速度 vs 时间进度 — 生成顶部提示语
+  function getSpeedMessage(dayQuotaPct, dayPct, todayUsed, dailyQuota) {
+    var ratio = dayPct > 1 ? dayQuotaPct / dayPct : dayQuotaPct;
+    var msg, color;
+    if (dayQuotaPct >= 200) {
+      msg = '🚀 Token消耗坐上火箭了！';
+      color = '#D32F2F';
+    } else if (ratio > 1.5) {
+      msg = '🔥 Token消耗速度太快了！';
+      color = '#F44336';
+    } else if (ratio > 1.0) {
+      msg = '⚠️ Token消耗速度有点快，悠着点儿';
+      color = '#FF9800';
+    } else if (ratio > 0.7) {
+      msg = '👍 今日额度还很宽裕，敞开用';
+      color = '#4CAF50';
+    } else if (ratio > 0.4) {
+      msg = '💪 今日额度太宽裕了，敞开用！';
+      color = '#2196F3';
+    } else {
+      msg = '🎉 Token不用留着过年吗？';
+      color = '#9C27B0';
+    }
+    return {
+      text: msg + '  |  ¥' + todayUsed.toFixed(0) + '/¥' + dailyQuota.toFixed(0),
+      color: color
+    };
+  }
+
   function renderExpanded(p, todayUsed, timestamp) {
     const now = new Date();
     const dayPct = ((now.getHours() * 60 + now.getMinutes()) / 1440) * 100;
     const dayQuotaPct = p.dailyQuota > 0 ? (todayUsed / p.dailyQuota) * 100 : 0;
     const remaining = p.budget - p.spent;
+    const speedMsg = getSpeedMessage(dayQuotaPct, dayPct, todayUsed, p.dailyQuota);
 
     // ── Header row ──
     var h = '<div class="tpua-header">' +
-      '<div class="tpua-status" style="color:' + p.statusColor + '">' +
-        p.statusIcon + ' ¥' + p.spent.toFixed(0) + '/¥' + p.budget.toFixed(0) + ' · ' + p.statusText +
+      '<div class="tpua-status" style="color:' + speedMsg.color + '">' +
+        speedMsg.text +
       '</div>' +
       '<div class="tpua-header-actions">' +
         '<span class="tpua-refresh-inline" onclick="window.__tpuaRefresh()">🔄 ' + timeAgo(timestamp) + '</span>' +
