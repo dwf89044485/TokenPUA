@@ -70,38 +70,59 @@
   // Origin: https://token.woa.com. Results come back via postMessage.
 
   function injectMainWorldFetcher() {
+    // Remove any stale injected script from previous version
+    const old = document.getElementById('tpua-main-fetcher');
+    if (old) old.remove();
+
     const s = document.createElement('script');
     s.id = 'tpua-main-fetcher';
     s.textContent = `
 (function() {
-  if (window.__tpuaFetcherReady) return;
+  // Version check — force re-init if outdated
+  if (window.__tpuaFetcherVersion === 2) return;
+  window.__tpuaFetcherVersion = 2;
   window.__tpuaFetcherReady = true;
 
   const BASE = '${BASE_URL}';
 
-  // Read Page-Token from <meta name="pt"> (same as page's script.js)
+  // Read Page-Token from <meta name="pt">
   function getPageToken() {
     const meta = document.querySelector('meta[name="pt"]');
-    return meta ? meta.content : '';
+    const token = meta ? meta.content : '';
+    console.log('TokenPUA [main]: page token found:', token ? token.slice(0, 20) + '...' : 'NONE');
+    return token;
   }
 
   async function apiGet(path) {
+    // Try to use the page's own apiFetch if available (handles token refresh)
+    if (typeof apiFetch === 'function') {
+      console.log('TokenPUA [main]: using page apiFetch for', path);
+      try {
+        const data = await apiFetch(path, { credentials: 'include' });
+        return data;
+      } catch (e) {
+        // page's apiFetch may auto-reload on token_expired; if we're here, it's a different error
+        throw new Error('apiFetch error: ' + e.message);
+      }
+    }
+
+    // Fallback: our own fetch with X-Page-Token
     const headers = {};
     const pt = getPageToken();
-    if (pt) {
-      headers['X-Page-Token'] = pt;
-    }
+    if (pt) headers['X-Page-Token'] = pt;
+
+    console.log('TokenPUA [main]: fetching', path, 'with token:', !!pt);
     const resp = await fetch(BASE + path, {
       credentials: 'include',
       headers: headers
     });
     const text = await resp.text();
     if (!resp.ok) {
-      if (resp.status === 401 || resp.status === 403) throw new Error('AUTH_EXPIRED');
+      if (resp.status === 401 || resp.status === 403) {
+        console.error('TokenPUA [main]: auth error', resp.status, text.slice(0, 200));
+        throw new Error('AUTH_EXPIRED');
+      }
       throw new Error('HTTP ' + resp.status + ': ' + text.slice(0, 200));
-    }
-    if (text.trim().startsWith('<!') || /^\\s*<html/i.test(text)) {
-      throw new Error('AUTH_EXPIRED');
     }
     return JSON.parse(text);
   }
