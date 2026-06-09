@@ -126,9 +126,11 @@ function showError(msg) {
     </div>`;
 }
 
-// 从 storage 读取数据
-chrome.storage.local.get('tokenPuaData', (result) => {
-  if (result.tokenPuaData) {
+// 从 storage 读取数据 + 错误
+chrome.storage.local.get(['tokenPuaData', 'tokenPuaError'], (result) => {
+  if (result.tokenPuaError) {
+    showError('错误: ' + result.tokenPuaError);
+  } else if (result.tokenPuaData) {
     render(result.tokenPuaData);
   } else {
     showError('暂无数据，请确保已登录 token.woa.com 并等待自动刷新');

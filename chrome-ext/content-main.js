@@ -11,12 +11,14 @@ async function fetchAll() {
     const ms = today.slice(0, 7) + '-01';
 
     const q = await fetch(BASE + '/api/query-quota?platform=codebuddy', { credentials: 'include' });
-    if (!q.ok) throw new Error('quota: ' + q.status);
-    const quota = await q.json();
+    const qText = await q.text();
+    if (!q.ok) throw new Error(`quota HTTP ${q.status}: ${qText.slice(0, 200)}`);
+    const quota = JSON.parse(qText);
 
     const u = await fetch(BASE + '/api/usage-summary?start_date=' + today + '&end_date=' + today + '&dimension=personal&platform=all', { credentials: 'include' });
-    if (!u.ok) throw new Error('usage: ' + u.status);
-    const usage = await u.json();
+    const uText = await u.text();
+    if (!u.ok) throw new Error(`usage HTTP ${u.status}: ${uText.slice(0, 200)}`);
+    const usage = JSON.parse(uText);
 
     let d = null;
     try {
@@ -65,5 +67,14 @@ window.addEventListener('message', (e) => {
   }
 });
 
-// Auto-fetch on page load
-fetchAll();
+// Auto-fetch on page load (with retry for bridge readiness)
+let retries = 0;
+function tryAutoFetch() {
+  fetchAll();
+  // 如果 bridge 还没就绪，结果会丢失，重试几次
+  if (retries < 3) {
+    retries++;
+    setTimeout(tryAutoFetch, retries * 2000);
+  }
+}
+setTimeout(tryAutoFetch, 500);

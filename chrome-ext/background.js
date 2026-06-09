@@ -61,8 +61,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.action === 'fetchResult') {
     if (msg.success && msg.data) {
       const data = buildPacedData(msg.data);
-      chrome.storage.local.set({ tokenPuaData: data });
+      chrome.storage.local.set({ tokenPuaData: data, tokenPuaError: null });
       updateBadge(data);
+    } else {
+      chrome.storage.local.set({ tokenPuaError: msg.error || '未知错误' });
     }
     return;
   }
