@@ -23,10 +23,6 @@
   const DASHBOARD_URL = 'https://token.woa.com/';
 
   const REFRESH_INTERVAL_MS = 3 * 60 * 1000;
-  const API_PAGE_SIZE = 50;
-  const FULL_SCAN_MAX_PAGES = 10;
-  const RECORDS_CACHE_LIMIT = 200;
-  const RECORDS_DISPLAY_LIMIT = 45;
 
   const STATUS_THRESHOLDS = [
     { min: 1.3, icon: '\u{1F7E5}', text: '加速',   color: '#F44336' },
@@ -121,50 +117,30 @@
     } catch(e) { return 0; }
   }
 
-  function toRec(rec) {
-    const ts = rec.request_time || '';
-    const tk = String(rec.total_tokens || '0').replace(/,/g, '');
-    return {
-      time: ts.slice(0, 16),
-      model: rec.model_name || '-',
-      cost: pc(rec.cost),
-      total_tokens: parseInt(tk) || 0,
-      user_input: (rec.user_input || '').slice(0, 100),
-    };
-  }
-
-  async function doFetch(monthStart, todayStr, cacheLastTime) {
+  async function doFetch(monthStart, todayStr) {
     // 1. Fetch quota
     const quota = await apiGet('/api/query-quota?platform=codebuddy');
     const totalUsed = parseFloat(quota.total_used) || 0;
     const totalQuota = parseFloat(quota.total_quota) || 1000;
 
-    // 2. Fetch usage details (page 1 only; orchestrator handles full scan)
-    let todayUsed = 0, todayLastTime = '', records = [], recordsLastTime = '';
+    // 2. Fetch today's usage summary (accurate aggregated total)
+    let todayUsed = 0;
     try {
-      const d1 = await apiGet(
-        '/api/usage-details?start_date=' + monthStart + '&end_date=' + todayStr +
-        '&dimension=all&page=1&page_size=50&platform=all'
+      const s1 = await apiGet(
+        '/api/usage-summary?start_date=' + todayStr + '&end_date=' + todayStr +
+        '&dimension=personal&platform=all'
       );
-      if (d1 && d1.data) {
-        for (const rec of d1.data) {
-          const rt = rec.request_time || '';
-          if (rt > recordsLastTime) recordsLastTime = rt;
-          if (rt.startsWith(todayStr)) {
-            todayUsed += pc(rec.cost);
-            if (rt > todayLastTime) todayLastTime = rt;
-          }
-          records.push(toRec(rec));
+      if (s1 && s1.data) {
+        for (const item of s1.data) {
+          todayUsed += pc(item.cost);
         }
-        records.sort(function(a,b) { return b.time.localeCompare(a.time); });
-        records = records.slice(0, 200);
       }
-    } catch(e) { /* page 1 fail is ok */ }
+    } catch(e) { /* summary fail is ok */ }
 
     window.postMessage({
       source: '__tpua_fetch',
       success: true,
-      data: { totalUsed, totalQuota, todayUsed, todayLastTime, records, recordsLastTime, monthStart, todayStr }
+      data: { totalUsed, totalQuota, todayUsed }
     }, '*');
   }
 
@@ -172,7 +148,7 @@
   window.addEventListener('message', function(e) {
     if (e.data && e.data.source === '__tpua_trigger') {
       try {
-        doFetch(e.data.monthStart, e.data.todayStr, e.data.cacheLastTime || '');
+        doFetch(e.data.monthStart, e.data.todayStr);
       } catch(err) {
         window.postMessage({ source: '__tpua_fetch', success: false, error: err.message }, '*');
       }
@@ -253,13 +229,12 @@
     console.log('TokenPUA: triggering main-world fetch...');
     const today = new Date();
     const todayStr = fmtDate(today);
-    const monthStart = todayStr.slice(0, 7) + '-01';
-    const currentMonth = todayStr.slice(0, 7);
 
     // Trigger fetch in main world
     window.postMessage({
       source: '__tpua_trigger',
-      monthStart, todayStr
+      monthStart: todayStr.slice(0, 7) + '-01',
+      todayStr
     }, '*');
 
     // Wait for result (up to 15 seconds)
@@ -277,86 +252,22 @@
     }
 
     const d = fetchData.data;
-    let totalUsed = d.totalUsed;
-    let totalQuota = d.totalQuota;
-    let todayUsed = d.todayUsed;
-    let todayLastTime = d.todayLastTime;
-    let records = d.records;
-    let recordsLastTime = d.recordsLastTime;
-    let needFullScan = false;
+    const totalUsed = d.totalUsed;
+    const totalQuota = d.totalQuota || 1000;
+    const todayUsed = d.todayUsed;
 
-    // Cache merge logic
-    const cache = await GM_getValue(CACHE_KEY, null);
-    if (!cache || cache.month !== currentMonth || cache.today_used === undefined) {
-      needFullScan = true;
-    }
-
-    if (needFullScan) {
-      // We already have page 1 data; fetch remaining pages if needed
-      // For now, page 1 is sufficient for most cases (most users < 50 records/day)
-      todayUsed = d.todayUsed;
-      todayLastTime = d.todayLastTime;
-      // Need more pages? Re-fetch with full scan
-      if (d.records && d.records.length >= 50) {
-        // Signal main world to do full scan
-        // For simplicity, page 1 is usually enough
-      }
-    } else {
-      // Incremental update
-      todayUsed = cache.today_used;
-      todayLastTime = cache.today_last_time || '';
-      records = [...(cache.records || [])];
-      recordsLastTime = cache.records_last_time || '';
-
-      if (todayStr !== cache.today_date) {
-        todayUsed = 0;
-        todayLastTime = '';
-      }
-
-      // Merge new records from page 1
-      let newCosts = 0;
-      let page1MaxTime = todayLastTime;
-      let newRecords = [];
-
-      if (d.records && d.records.length) {
-        for (const rec of d.records) {
-          if (rec.time.startsWith(todayStr) && rec.time > todayLastTime) {
-            newCosts += rec.cost;
-          }
-          if (rec.time > cache.records_last_time) {
-            newRecords.push(rec);
-          }
-          if (rec.time > page1MaxTime) page1MaxTime = rec.time;
-        }
-      }
-
-      if (newRecords.length) {
-        const et = new Set(records.map(r => r.time));
-        newRecords = newRecords.filter(r => !et.has(r.time));
-        records = [...newRecords, ...records].slice(0, RECORDS_CACHE_LIMIT);
-        for (const r of newRecords) {
-          if (r.time > recordsLastTime) recordsLastTime = r.time;
-        }
-      }
-      todayUsed += newCosts;
-      if (page1MaxTime > todayLastTime) todayLastTime = page1MaxTime;
-    }
-
-    // Save cache
+    // Save cache (only needed for quick initial display on page reload)
     lastFetchTimestamp = Date.now();
     await GM_setValue(CACHE_KEY, {
       time: fmtTime(new Date()),
       spent: totalUsed,
       today_date: todayStr,
       today_used: todayUsed,
-      today_last_time: todayLastTime,
-      month: currentMonth,
-      records: records,
-      records_last_time: recordsLastTime,
+      month: todayStr.slice(0, 7),
       timestamp: lastFetchTimestamp,
     });
 
-    // Calculate remaining workdays from TODAY (includes today)
+    // Calculate pacing
     const yd = new Date(), ym = yd.getMonth();
     const totalDays = new Date(yd.getFullYear(), ym + 1, 0).getDate();
     const monthEnd = new Date(yd.getFullYear(), ym, totalDays);
@@ -364,7 +275,7 @@
     console.log('TokenPUA: today=' + fmtDate(yd) + ' monthEnd=' + fmtDate(monthEnd) + ' remainingWd=' + remainingWd);
     const pacing = calcPacing(totalUsed, totalQuota, remainingWd);
 
-    return { pacing, todayUsed, records: records.slice(0, RECORDS_DISPLAY_LIMIT), timestamp: lastFetchTimestamp };
+    return { pacing, todayUsed, timestamp: lastFetchTimestamp };
   }
 
   // ============================================================
