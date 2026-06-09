@@ -87,14 +87,19 @@ function buildCookieString() {
 // ─── 数据获取 ───────────────────────────
 async function fetchWithCookie(url, cookieStr) {
   const resp = await fetch(url, {
-    credentials: 'omit', // 不用默认 cookie，我们手动传递
-    headers: { 'Cookie': cookieStr, 'User-Agent': 'TokenPUA/1.0' }
+    credentials: 'omit',
+    headers: {
+      'Cookie': cookieStr,
+      'User-Agent': 'TokenPUA/1.0',
+      'Accept': 'application/json, text/plain, */*',
+      'X-Requested-With': 'XMLHttpRequest',
+    }
   });
-  if (!resp.ok) {
-    const body = await resp.text().catch(() => '');
+  const body = await resp.text();
+  if (!resp.ok || body.startsWith('<')) {
     throw new Error(`HTTP ${resp.status}: ${body.slice(0, 100)}`);
   }
-  return resp.json();
+  return JSON.parse(body);
 }
 
 async function fetchAll() {
