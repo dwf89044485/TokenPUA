@@ -1,16 +1,17 @@
 // TokenPUA Content Script — runs on token.woa.com pages
-// 在同源页面上下文中调用 API（Cookie 自动携带）
-
 const BASE_URL = 'https://token.woa.com';
 
 async function fetchApi(path) {
   const resp = await fetch(`${BASE_URL}${path}`, {
     credentials: 'include',
-    headers: { 'Accept': 'application/json, text/plain, */*' }
+    headers: { 'Accept': 'application/json, text/plain, */*', 'X-Requested-With': 'XMLHttpRequest' }
   });
   const body = await resp.text();
-  if (!resp.ok || body.startsWith('<')) {
-    throw new Error(`HTTP ${resp.status}: ${body.slice(0, 100)}`);
+  if (!resp.ok) {
+    throw new Error(`HTTP ${resp.status}: ${body.slice(0, 200)}`);
+  }
+  if (body.startsWith('<')) {
+    throw new Error(`HTML 响应(code=${resp.status}): ${body.slice(0, 200)}`);
   }
   return JSON.parse(body);
 }
@@ -26,7 +27,7 @@ async function fetchAll() {
   ]);
 
   let todayUsed = 0;
-  if (usage && usage.data) {
+  if (usage?.data) {
     for (const item of usage.data) {
       todayUsed += parseFloat(String(item.cost || '0').replace(/[¥,]/g, '')) || 0;
     }
@@ -36,7 +37,7 @@ async function fetchAll() {
   const totalQuota = parseFloat(quota.total_quota) || 1000;
 
   const records = [];
-  if (details && details.data) {
+  if (details?.data) {
     for (const rec of details.data) {
       const cost = parseFloat(String(rec.cost || '0').replace(/[¥,]/g, '')) || 0;
       const totalStr = String(rec.total_tokens || '0').replace(/,/g, '');
@@ -49,7 +50,7 @@ async function fetchAll() {
     }
   }
 
-  return { quota, usage, details, todayUsed, totalUsed, totalQuota, records, timestamp: Date.now() };
+  return { totalUsed, totalQuota, todayUsed, records, timestamp: Date.now() };
 }
 
 // ─── 监听后台请求 ─────────────────────────
@@ -57,10 +58,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.action === 'fetchTokenData') {
     fetchAll()
       .then(data => sendResponse({ success: true, data }))
-      .catch(err => sendResponse({ success: false, error: err.message }));
-    return true; // 异步响应
+      .catch(err => {
+        console.error('TokenPUA content fetch error:', err.message);
+        sendResponse({ success: false, error: err.message });
+      });
+    return true;
   }
 });
 
-// 页面加载后自动发一次（如果用户正常访问 token.woa.com 时）
+// 页面加载后通知后台：Content Script 已就绪
 chrome.runtime.sendMessage({ action: 'contentScriptReady' });
