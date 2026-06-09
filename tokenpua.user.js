@@ -5,9 +5,11 @@
 // @description  在 token.woa.com 页面显示额度使用进度面板
 // @author       josephdeng
 // @match        https://token.woa.com/*
+// @match        https://token.woa.com
+// @match        http://token.woa.com/*
+// @match        http://token.woa.com
 // @grant        GM_getValue
 // @grant        GM_setValue
-// @grant        GM_addStyle
 // @run-at       document-end
 // ==/UserScript==
 
@@ -206,6 +208,7 @@ function calcPacing(spent, budget, remainingWd) {
 // ============================================================
 
 async function fetchAllData() {
+  console.log('TokenPUA: fetching all data...');
   // 1. Fetch quota
   const quota = await fetchQuota();
   const totalUsed = parseFloat(quota.total_used) || 0;
@@ -480,6 +483,7 @@ function stopAutoRefresh() {
 }
 
 async function refreshData() {
+  console.log('TokenPUA: refresh started');
   const panel = document.getElementById('tpua-panel');
   if (!panel) return;
 
@@ -521,6 +525,11 @@ async function refreshData() {
 function injectPanel() {
   if (document.getElementById('tpua-panel')) return;
 
+  if (!document.body) {
+    console.error('TokenPUA: document.body not ready, aborting injection');
+    return;
+  }
+
   const panel = document.createElement('div');
   panel.id = 'tpua-panel';
   panel.className = 'collapsed';
@@ -528,16 +537,17 @@ function injectPanel() {
   panel.innerHTML = renderLoading();
 
   document.body.appendChild(panel);
+  console.log('TokenPUA: panel injected into DOM');
 
   // Global refresh function (accessible from onclick)
   window.__tpuaRefresh = refreshData;
 }
 
 // ============================================================
-// Section 9: CSS (via GM_addStyle)
+// Section 9: CSS
 // ============================================================
 
-GM_addStyle(`
+const PANEL_CSS = `
 #tpua-panel {
   position: fixed;
   bottom: 16px;
@@ -780,15 +790,41 @@ GM_addStyle(`
   animation: tpua-spin 0.6s linear infinite;
   margin-right: 6px;
 }
-`);
+`;
+
+function injectStyles() {
+  try {
+    // Prefer GM_addStyle for proper sandboxing
+    if (typeof GM_addStyle !== 'undefined') {
+      GM_addStyle(PANEL_CSS);
+      console.log('TokenPUA: styles injected via GM_addStyle');
+      return;
+    }
+  } catch (e) {
+    console.warn('TokenPUA: GM_addStyle threw, falling back to <style> element', e);
+  }
+  // Manual fallback
+  const style = document.createElement('style');
+  style.id = 'tpua-styles';
+  style.textContent = PANEL_CSS;
+  (document.head || document.documentElement).appendChild(style);
+  console.log('TokenPUA: styles injected via <style> element');
+}
 
 // ============================================================
 // Section 10: Initialization
 // ============================================================
 
 async function init() {
+  injectStyles();
+  console.log('TokenPUA: init started');
+
   injectPanel();
   const panel = document.getElementById('tpua-panel');
+  if (!panel) {
+    console.error('TokenPUA: failed to create panel');
+    return;
+  }
 
   // Show loading
   panel.innerHTML = renderLoading();
@@ -842,6 +878,6 @@ async function init() {
 
 (function() {
   'use strict';
-  // Delay slightly to ensure page DOM is stable
+  console.log('TokenPUA: script loaded, scheduling init...');
   setTimeout(init, 800);
 })();
