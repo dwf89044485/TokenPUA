@@ -54,19 +54,19 @@ async function fetchAll() {
   const monthStart = todayStr.slice(0, 7) + '-01';
 
   // 并行请求
-  const [quotaRes, usageRes] = await Promise.all([
+  const [quotaRes, usageRes, detailsRes] = await Promise.all([
     fetch(`${BASE_URL}/api/query-quota?platform=codebuddy`, { credentials: 'include' }),
     fetch(`${BASE_URL}/api/usage-summary?start_date=${todayStr}&end_date=${todayStr}&dimension=personal&platform=all`, { credentials: 'include' }),
+    fetch(`${BASE_URL}/api/usage-details?start_date=${monthStart}&end_date=${todayStr}&dimension=all&page=1&page_size=50&platform=all`, { credentials: 'include' }),
   ]);
 
   if (!quotaRes.ok || !usageRes.ok) {
-    const e1 = await quotaRes.text().catch(() => '');
-    const e2 = await usageRes.text().catch(() => '');
     throw new Error(`API error: quota=${quotaRes.status} usage=${usageRes.status}`);
   }
 
   const quota = await quotaRes.json();
   const usage = await usageRes.json();
+  const details = detailsRes.ok ? await detailsRes.json() : null;
 
   // 计算今日消耗
   let todayUsed = 0;
@@ -80,6 +80,22 @@ async function fetchAll() {
   const totalUsed = parseFloat(quota.total_used) || 0;
   const totalQuota = parseFloat(quota.total_quota) || 1000;
 
+  // 解析记录
+  const records = [];
+  if (details && details.data) {
+    for (const rec of details.data) {
+      const cost = parseFloat(String(rec.cost || '0').replace(/[¥,]/g, '')) || 0;
+      const totalStr = String(rec.total_tokens || '0').replace(/,/g, '');
+      records.push({
+        time: (rec.request_time || '').slice(0, 16),
+        model: rec.model_name || '-',
+        cost,
+        total_tokens: parseInt(totalStr) || 0,
+        user_input: (rec.user_input || '').slice(0, 100),
+      });
+    }
+  }
+
   const today = new Date();
   const year = today.getFullYear();
   const month = today.getMonth();
@@ -89,7 +105,7 @@ async function fetchAll() {
 
   const pacing = calcPacing(totalUsed, totalQuota, remainingWd);
 
-  return { pacing, todayUsed, timestamp: Date.now() };
+  return { pacing, todayUsed, records, timestamp: Date.now() };
 }
 
 // ─── Badge 更新 ─────────────────────────
